@@ -17,7 +17,7 @@ variable "github_org" {
 variable "github_repo" {
   description = "Repository name (without the org prefix)."
   type        = string
-  default     = "littleloot-backend"
+  default     = "Little-Loot-Backend"
 }
 
 # OIDC provider for GitHub Actions (one per AWS account; safe to have duplicates
