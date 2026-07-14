@@ -1,0 +1,70 @@
+name: Build & Deploy to App Runner
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION:     ap-south-1
+  ECR_REPO_NAME:  littleloot-backend
+  APP_RUNNER_ARN: ${{ secrets.APP_RUNNER_SERVICE_ARN }}
+
+jobs:
+  build-and-deploy:
+    name: Build image → ECR → App Runner
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push Docker image
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          IMAGE="${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPO_NAME }}"
+          docker build -t "${IMAGE}:${SHORT_SHA}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${SHORT_SHA}"
+          docker push "${IMAGE}:latest"
+
+      - name: Trigger App Runner deployment
+        run: |
+          aws apprunner start-deployment \
+            --service-arn "${{ env.APP_RUNNER_ARN }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Wait for App Runner to be RUNNING
+        run: |
+          for i in $(seq 1 60); do
+            STATUS=$(aws apprunner describe-service \
+              --service-arn "${{ env.APP_RUNNER_ARN }}" \
+              --region "${{ env.AWS_REGION }}" \
+              --query 'Service.Status' --output text)
+            echo "[${i}/60] ${STATUS}"
+            [ "$STATUS" = "RUNNING" ] && exit 0
+            [[ "$STATUS" == *FAILED* ]] && { echo "Deploy failed"; exit 1; }
+            sleep 10
+          done
+          echo "Timed out"; exit 1
+
+      - name: Smoke test
+        run: |
+          URL=$(aws apprunner describe-service \
+            --service-arn "${{ env.APP_RUNNER_ARN }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --query 'Service.ServiceUrl' --output text)
+          HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "https://${URL}/healthz")
+          [ "$HTTP" = "200" ] && echo "Health check OK" || { echo "Health check failed (${HTTP})"; exit 1; }
