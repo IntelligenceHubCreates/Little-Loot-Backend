@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
-from typing import List, Optional
+from typing import Any, List, Optional, Union
 from uuid import UUID
 
 import cloudinary
@@ -758,8 +758,8 @@ async def add_new_product(
     productDiscount:       int                       = Form(...),
     productDiscountAmount: int                       = Form(...),
     productImages:         Optional[List[UploadFile]] = File(None),
-    productImageUrls:      Optional[List[str]]       = Form(None),
-    productDetails:        Optional[List[str]]        = Form(None),
+    productImageUrls:      Optional[Any]             = Form(None),
+    productDetails:        Optional[Any]              = Form(None),
     offerExpirationDate:   Optional[datetime]        = Form(None),
     productColor:          Optional[str]    = Form(None),
     productColorHex:       Optional[str]    = Form(None),
@@ -772,6 +772,11 @@ async def add_new_product(
     _require_admin(user)
     if productPrice <= 0:
         raise HTTPException(status_code=400, detail="Price must be greater than 0")
+
+    if isinstance(productImageUrls, str):
+        productImageUrls = [productImageUrls]
+    if isinstance(productDetails, str):
+        productDetails = [productDetails]
 
     images = await upload_images(productImages) if productImages else []
     if productImageUrls:
@@ -904,8 +909,8 @@ async def update_product(
     productDiscount:       int                       = Form(...),
     productDiscountAmount: int                       = Form(...),
     productImages:         List[UploadFile]          = File(None),
-    productImageUrls:      List[str]                 = Form(None),
-    productDetails:        List[str]                 = Form(...),
+    productImageUrls:      Optional[Any]             = Form(None),
+    productDetails:        Optional[Any]             = Form(...),
     oldProductImages:      str                       = Form(...),
     productColor:          Optional[str]    = Form(None),
     productColorHex:       Optional[str]    = Form(None),
@@ -921,6 +926,11 @@ async def update_product(
         raise HTTPException(status_code=400, detail="Price must be greater than 0")
 
     product = _get_product_or_404(id, session)
+
+    if isinstance(productImageUrls, str):
+        productImageUrls = [productImageUrls]
+    if isinstance(productDetails, str):
+        productDetails = [productDetails]
 
     existing_images = json.loads(oldProductImages) if oldProductImages else []
     new_uploads = await upload_images(productImages or [])
