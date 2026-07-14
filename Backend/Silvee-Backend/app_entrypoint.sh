@@ -28,16 +28,15 @@ ADMIN_EMAIL="${INITIAL_ADMIN_EMAIL:-}"
 ADMIN_HASH="${INITIAL_ADMIN_PASSWORD_HASH:-}"
 
 if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_HASH" ]; then
-  EXISTS=$(psql -h "${POSTGRES_SERVER}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -t \
-    -c "SELECT 1 FROM users WHERE email = '${ADMIN_EMAIL}' LIMIT 1;" | xargs)
-  if [ -z "$EXISTS" ]; then
-    echo "Seeding initial admin: ${ADMIN_EMAIL}"
-    psql -h "${POSTGRES_SERVER}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c \
-      "INSERT INTO users (email, confirmed, hashed_password, role, is_active) \
-       VALUES ('${ADMIN_EMAIL}', true, '${ADMIN_HASH}', 1, true);"
-  else
-    echo "Admin account already exists — skipping seed."
-  fi
+  echo "Upserting admin account: ${ADMIN_EMAIL}"
+  # Remove any existing admin(s) so credentials from Secrets Manager are always authoritative,
+  # then insert the single admin defined in Secrets Manager.
+  psql -h "${POSTGRES_SERVER}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c \
+    "DELETE FROM users WHERE role = 1;"
+  psql -h "${POSTGRES_SERVER}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c \
+    "INSERT INTO users (email, confirmed, hashed_password, role, is_active) \
+     VALUES ('${ADMIN_EMAIL}', true, '${ADMIN_HASH}', 1, true);"
+  echo "Admin account set: ${ADMIN_EMAIL}"
 else
   echo "INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD_HASH not set — skipping admin seed."
 fi
