@@ -1,0 +1,43 @@
+# Never bake secrets or dev artifacts into the production Docker image.
+
+# Secrets — NEVER include in image layers
+.env
+.env.*
+app/.env
+app/.env.*
+
+# Python cache and compiled bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Editor / OS artifacts
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Git
+.git/
+.gitignore
+
+# Alembic doesn't need the old SQLite offline journal
+*.db
+
+# Documentation
+README.md
+*.md

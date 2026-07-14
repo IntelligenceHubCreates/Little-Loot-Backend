@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (gitignored) and fill in real values before apply.
+# terraform.tfvars is NEVER committed — it may contain account IDs / ARNs.
+
+aws_region   = "ap-south-1"
+project_name = "littleloot"
+environment  = "production"
+
+# Use db.t3.small or larger for production traffic.
+db_instance_class = "db.t3.micro"
+db_multi_az       = true
+
+# GitHub OIDC
+github_org  = "IntelligenceHubCreates"
+github_repo = "littleloot-backend"
