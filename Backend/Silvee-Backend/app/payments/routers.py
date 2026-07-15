@@ -1,6 +1,7 @@
 # app/payments/router.py
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -32,7 +33,11 @@ payment_router = APIRouter(prefix="/api/payments", tags=["Payments"])
 def get_razorpay_client() -> razorpay.Client:
     if not settings.razorpay_key_id or not settings.razorpay_key_secret:
         raise HTTPException(status_code=503, detail="Payment service not configured.")
-    return razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
+    client = razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
+    # Prevent Envoy 502 by timing out before the 80s upstream deadline
+    if hasattr(client, 'session'):
+        client.session.timeout = 20
+    return client
 
 
 def _send_order_confirmation(user_email: str, user_name: str, order_id: str, total: float, items: list) -> None:
@@ -180,13 +185,21 @@ async def create_payment_order(
         raise HTTPException(status_code=400, detail="Invalid order total")
 
     client = get_razorpay_client()
+    order_payload = {
+        "amount": amount_paise, "currency": "INR",
+        "receipt": f"rcpt_{uuid.uuid4().hex[:12]}",
+        "payment_capture": 1,
+        "notes": {"source": "LittleLoot"},
+    }
     try:
-        rz_order = client.order.create({
-            "amount": amount_paise, "currency": "INR",
-            "receipt": f"rcpt_{uuid.uuid4().hex[:12]}",
-            "payment_capture": 1,
-            "notes": {"source": "LittleLoot"},
-        })
+        loop = asyncio.get_event_loop()
+        rz_order = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: client.order.create(order_payload)),
+            timeout=25.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error("Razorpay order creation timed out")
+        raise HTTPException(status_code=504, detail="Payment service timeout. Please try again.")
     except Exception:
         logger.error("Razorpay order creation failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
