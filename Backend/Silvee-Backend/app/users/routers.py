@@ -106,7 +106,36 @@ def login(request: Request, body: requestdetails, response: Response, db: Sessio
 
 
 @router.post('/google-login')
-def google_login(google_data: GoogleLoginRequest, response: Response, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+async def google_login(request: Request, google_data: GoogleLoginRequest, response: Response, db: Session = Depends(get_db)):
+    # SECURITY: verify the Google token before trusting any identity claim.
+    # Without this check, anyone who knows a victim's email can pass arbitrary
+    # google_id values and receive a valid JWT for the victim's account.
+    access_token = google_data.google_access_token or ""
+    id_token     = google_data.google_id_token     or ""
+
+    if not access_token and not id_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google login failed: no token provided"
+        )
+
+    verified_profile = None
+    if access_token:
+        verified_profile = await verify_google_token(access_token)
+
+    if not verified_profile:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google login failed: token verification failed"
+        )
+
+    # Use verified data from Google — never trust the request body for identity
+    google_data.google_id = verified_profile.get("id",   google_data.google_id)
+    google_data.email     = verified_profile.get("email",google_data.email)
+    google_data.name      = verified_profile.get("name", google_data.name)
+    google_data.image     = verified_profile.get("picture", google_data.image)
+
     try:
         user = handle_google_login(db, google_data)
         access = create_access_token(user.id, db)
@@ -287,7 +316,8 @@ def forgot_password(request: Request, payload: ForgotPasswordRequest, db: Sessio
 
 
 @router.post('/reset-password')
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def reset_password(request: Request, payload: ResetPasswordRequest, db: Session = Depends(get_db)):
     """Validates the reset token and updates the user's password."""
     INVALID = HTTPException(status_code=400, detail="This reset link is invalid or has expired.")
 

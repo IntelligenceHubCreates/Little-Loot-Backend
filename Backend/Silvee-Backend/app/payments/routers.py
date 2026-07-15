@@ -11,6 +11,7 @@ from typing import List, Optional
 import razorpay
 import resend
 from fastapi import APIRouter, Depends, HTTPException, Request
+from app.limiter import limiter
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -123,7 +124,9 @@ class VerifyPaymentResponse(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 @payment_router.post("/create-order", response_model=CreateOrderResponse)
+@limiter.limit("10/minute")
 async def create_payment_order(
+    request: Request,
     body: CreateOrderRequest,
     session: Session = Depends(get_db),
     user=Depends(JWTBearer()),
@@ -184,8 +187,9 @@ async def create_payment_order(
             "payment_capture": 1,
             "notes": {"source": "LittleLoot"},
         })
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Razorpay error: {str(e)}")
+    except Exception:
+        logger.error("Razorpay order creation failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
 
     # Snapshot everything verify needs to build the real order
     snapshot = {
@@ -305,8 +309,9 @@ async def verify_payment(
             if p:
                 p.count = max(0, (p.count or 0) - int(it.get("quantity", 1)))
         session.commit()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Order creation failed: {str(e)}")
+    except Exception:
+        logger.error("Order creation failed after payment verify", exc_info=True)
+        raise HTTPException(status_code=500, detail="Order creation failed. Contact support.")
 
     # ── Order confirmation email (fire-and-forget; never blocks the response) ──
     if uid:
@@ -482,16 +487,27 @@ async def get_order_by_payment(
     session: Session = Depends(get_db),
     user=Depends(JWTBearer()),
 ):
+    user_id = str(user["id"]) if user and user.get("id") else None
+
     if hasattr(Order, 'razorpay_payment_id'):
-        order = session.query(Order).filter(
+        q = session.query(Order).filter(
             Order.razorpay_payment_id == razorpay_payment_id
-        ).first()
+        )
+        if user_id and hasattr(Order, 'user_id'):
+            q = q.filter(Order.user_id == user_id)
+        order = q.first()
         if order:
             return _format_order(order)
 
-    payment = session.query(PaymentOrder).filter(
+    q2 = session.query(PaymentOrder).filter(
         PaymentOrder.razorpay_payment_id == razorpay_payment_id
-    ).first()
+    )
+    if user_id:
+        try:
+            q2 = q2.filter(PaymentOrder.user_id == uuid.UUID(user_id))
+        except (ValueError, AttributeError):
+            pass
+    payment = q2.first()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
 

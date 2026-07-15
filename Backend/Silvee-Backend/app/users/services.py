@@ -67,11 +67,11 @@ def handle_google_login(db: Session, google_data: GoogleLoginRequest) -> Users:
         db.refresh(new_user)
         return new_user
 
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to process Google login: {str(e)}"
+            detail="Google login failed"
         )
 
 

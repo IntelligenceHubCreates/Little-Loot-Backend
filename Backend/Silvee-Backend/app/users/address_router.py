@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -9,6 +10,8 @@ from app.users.schemas import AddressCreate, AddressResponse
 from app.users.services import (
     create_address, get_user_addresses, get_address, update_address, delete_address,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/address", tags=["address"])
 
@@ -24,12 +27,12 @@ async def create_user_address(
         created = create_address(db, address, user)
         if created:
             return {"message": "Address Created Successfully"}
-        raise Exception("Address could not be created")
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Address could not be created")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("create_user_address failed", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred")
 
 
 @router.get("/addresses", response_model=List[AddressResponse])
@@ -50,11 +53,9 @@ async def get_addresses(
             result.append(i)
 
         return [AddressResponse.from_orm(address) for address in result]
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+    except Exception:
+        logger.error("get_addresses failed", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred")
 
 
 @router.get("/addresses/{address_id}", response_model=AddressResponse)
@@ -77,11 +78,9 @@ async def get_address_by_id(
         return address
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+    except Exception:
+        logger.error("get_address_by_id failed", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred")
 
 
 @router.put("/addresses/{address_id}")
@@ -99,11 +98,9 @@ async def update_user_address(
         return {"message": "Update Successfully"}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+    except Exception:
+        logger.error("update_user_address failed", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred")
 
 
 @router.delete("/addresses/{address_id}")
@@ -120,8 +117,6 @@ async def delete_user_address(
         return {"message": "Address deleted successfully"}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+    except Exception:
+        logger.error("delete_user_address failed", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred")

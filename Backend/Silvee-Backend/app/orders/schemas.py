@@ -1,5 +1,5 @@
 # app/orders/schemas.py
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
@@ -21,21 +21,21 @@ class ProductInOrder(BaseModel):
 
 
 class OrderItemBase(BaseModel):
-    product_id: str
-    quantity:   int
-    price:      float
-    color:      Optional[str]   = None   # selected color variant name e.g. "Pink"
-    color_hex:  Optional[str]   = None   # selected color hex e.g. "#F4A7B9"
-    image:      Optional[str]   = None   # color-specific image URL
+    product_id: str  = Field(..., max_length=200)
+    quantity:   int  = Field(..., ge=1, le=100)
+    price:      float = Field(..., ge=0)
+    color:      Optional[str]   = None
+    color_hex:  Optional[str]   = None
+    image:      Optional[str]   = None
 
 
 class OrderBase(BaseModel):
-    shipping_address: str
-    total_amount:     float
-    status:           str = "confirmed"
-    coupon_code:      Optional[str] = None  
-    order_items:      List[OrderItemBase] = []
-    gift_message:     Optional[str] = None
+    shipping_address: str  = Field(..., max_length=500)
+    total_amount:     float = Field(..., ge=0)
+    status:           str  = "confirmed"
+    coupon_code:      Optional[str] = Field(None, max_length=50)
+    order_items:      List[OrderItemBase] = Field(default=[], max_length=50)
+    gift_message:     Optional[str] = Field(None, max_length=500)
 
 
 class OrderCreate(OrderBase):

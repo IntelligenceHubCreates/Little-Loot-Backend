@@ -65,7 +65,7 @@ def decodeJWT(jwtoken: str, db: Session, return_object: bool = False) -> Tuple[A
     - return_object=True  -> payload is the Users ORM object
     """
     try:
-        payload = jwt.decode(jwtoken, JWT_SECRET_KEY, ALGORITHM)
+        payload = jwt.decode(jwtoken, JWT_SECRET_KEY, algorithms=[ALGORITHM])
         if not payload:
             return None, "Invalid token payload"
 
