@@ -1,7 +1,6 @@
 # app/payments/router.py
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import logging
@@ -9,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
+import httpx
 import razorpay
 import resend
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -31,13 +31,35 @@ payment_router = APIRouter(prefix="/api/payments", tags=["Payments"])
 
 
 def get_razorpay_client() -> razorpay.Client:
+    """Used only for local operations (signature verification). No network calls."""
     if not settings.razorpay_key_id or not settings.razorpay_key_secret:
         raise HTTPException(status_code=503, detail="Payment service not configured.")
-    client = razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
-    # Prevent Envoy 502 by timing out before the 80s upstream deadline
-    if hasattr(client, 'session'):
-        client.session.timeout = 20
-    return client
+    return razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
+
+
+async def create_razorpay_order_async(payload: dict) -> dict:
+    """Create a Razorpay order using async httpx — never blocks the event loop."""
+    if not settings.razorpay_key_id or not settings.razorpay_key_secret:
+        raise HTTPException(status_code=503, detail="Payment service not configured.")
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                "https://api.razorpay.com/v1/orders",
+                json=payload,
+                auth=(settings.razorpay_key_id, settings.razorpay_key_secret),
+            )
+            if resp.status_code not in (200, 201):
+                logger.error("Razorpay API error %s: %s", resp.status_code, resp.text)
+                raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
+            return resp.json()
+    except httpx.TimeoutException:
+        logger.error("Razorpay API timed out")
+        raise HTTPException(status_code=504, detail="Payment service timeout. Please try again.")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("Razorpay order creation failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
 
 
 def _send_order_confirmation(user_email: str, user_name: str, order_id: str, total: float, items: list) -> None:
@@ -184,25 +206,12 @@ async def create_payment_order(
     if amount_paise <= 0:
         raise HTTPException(status_code=400, detail="Invalid order total")
 
-    client = get_razorpay_client()
-    order_payload = {
+    rz_order = await create_razorpay_order_async({
         "amount": amount_paise, "currency": "INR",
         "receipt": f"rcpt_{uuid.uuid4().hex[:12]}",
         "payment_capture": 1,
         "notes": {"source": "LittleLoot"},
-    }
-    try:
-        loop = asyncio.get_event_loop()
-        rz_order = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: client.order.create(order_payload)),
-            timeout=25.0,
-        )
-    except asyncio.TimeoutError:
-        logger.error("Razorpay order creation timed out")
-        raise HTTPException(status_code=504, detail="Payment service timeout. Please try again.")
-    except Exception:
-        logger.error("Razorpay order creation failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
+    })
 
     # Snapshot everything verify needs to build the real order
     snapshot = {
