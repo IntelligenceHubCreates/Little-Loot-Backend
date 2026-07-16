@@ -29,13 +29,16 @@ ADMIN_HASH="${INITIAL_ADMIN_PASSWORD_HASH:-}"
 
 if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_HASH" ]; then
   echo "Upserting admin account: ${ADMIN_EMAIL}"
-  # Remove any existing admin(s) so credentials from Secrets Manager are always authoritative,
-  # then insert the single admin defined in Secrets Manager.
+  # UPSERT: update credentials if the email already exists, insert if not.
+  # Never DELETE the admin row — it may be referenced by favorites/orders/etc.
   psql -h "${POSTGRES_SERVER}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c \
-    "DELETE FROM users WHERE role = 1;"
-  psql -h "${POSTGRES_SERVER}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c \
-    "INSERT INTO users (email, confirmed, hashed_password, role, is_active) \
-     VALUES ('${ADMIN_EMAIL}', true, '${ADMIN_HASH}', 1, true);"
+    "INSERT INTO users (email, confirmed, hashed_password, role, is_active)
+     VALUES ('${ADMIN_EMAIL}', true, '${ADMIN_HASH}', 1, true)
+     ON CONFLICT (email)
+     DO UPDATE SET hashed_password = EXCLUDED.hashed_password,
+                   role            = 1,
+                   is_active       = true,
+                   confirmed       = true;"
   echo "Admin account set: ${ADMIN_EMAIL}"
 else
   echo "INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD_HASH not set — skipping admin seed."
