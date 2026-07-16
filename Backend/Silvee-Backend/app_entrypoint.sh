@@ -28,18 +28,25 @@ ADMIN_EMAIL="${INITIAL_ADMIN_EMAIL:-}"
 ADMIN_HASH="${INITIAL_ADMIN_PASSWORD_HASH:-}"
 
 if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_HASH" ]; then
-  echo "Upserting admin account: ${ADMIN_EMAIL}"
-  # UPSERT: update credentials if the email already exists, insert if not.
-  # Never DELETE the admin row — it may be referenced by favorites/orders/etc.
-  psql -h "${POSTGRES_SERVER}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c \
-    "INSERT INTO users (email, confirmed, hashed_password, role, is_active)
-     VALUES ('${ADMIN_EMAIL}', true, '${ADMIN_HASH}', 1, true)
-     ON CONFLICT (email)
-     DO UPDATE SET hashed_password = EXCLUDED.hashed_password,
-                   role            = 1,
-                   is_active       = true,
-                   confirmed       = true;"
-  echo "Admin account set: ${ADMIN_EMAIL}"
+  echo "Seeding admin account: ${ADMIN_EMAIL}"
+  # Writeable CTE: UPDATE if email exists (never touches id → no FK violations),
+  # INSERT only if no row was updated. Avoids ON CONFLICT which triggers FK checks.
+  ADMIN_HASH_ESC=$(printf '%s' "${ADMIN_HASH}" | sed "s/'/''/g")
+  ADMIN_EMAIL_ESC=$(printf '%s' "${ADMIN_EMAIL}" | sed "s/'/''/g")
+  psql -h "${POSTGRES_SERVER}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c "
+    WITH upd AS (
+      UPDATE users
+      SET hashed_password = '${ADMIN_HASH_ESC}',
+          role            = 1,
+          is_active       = true,
+          confirmed       = true
+      WHERE email = '${ADMIN_EMAIL_ESC}'
+      RETURNING id
+    )
+    INSERT INTO users (email, confirmed, hashed_password, role, is_active)
+    SELECT '${ADMIN_EMAIL_ESC}', true, '${ADMIN_HASH_ESC}', 1, true
+    WHERE NOT EXISTS (SELECT 1 FROM upd);"
+  echo "Admin account seeded: ${ADMIN_EMAIL}"
 else
   echo "INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD_HASH not set — skipping admin seed."
 fi
