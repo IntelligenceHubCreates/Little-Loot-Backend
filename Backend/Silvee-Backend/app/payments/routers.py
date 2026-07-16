@@ -6,7 +6,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-import httpx
+import asyncio
+import json as _json
+
+import boto3
+from botocore.config import Config
 import razorpay
 import resend
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -35,28 +39,50 @@ def get_razorpay_client() -> razorpay.Client:
     return razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
 
 
+_lambda_client = None
+
+def _get_lambda_client():
+    global _lambda_client
+    if _lambda_client is None:
+        _lambda_client = boto3.client(
+            "lambda",
+            region_name="ap-south-1",
+            config=Config(connect_timeout=5, read_timeout=25, retries={"max_attempts": 1}),
+        )
+    return _lambda_client
+
+
+def _invoke_razorpay_lambda(payload: dict) -> dict:
+    """Synchronous Lambda invocation — runs in thread pool so it doesn't block the event loop."""
+    client = _get_lambda_client()
+    resp = client.invoke(
+        FunctionName="littleloot-razorpay-proxy",
+        InvocationType="RequestResponse",
+        Payload=_json.dumps({"payload": payload}).encode(),
+    )
+    result = _json.loads(resp["Payload"].read())
+    status = result.get("statusCode", 502)
+    if status not in (200, 201):
+        logger.error("Razorpay Lambda returned %s: %s", status, result.get("error", ""))
+        raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
+    return result["body"]
+
+
 async def create_razorpay_order_async(payload: dict) -> dict:
-    """Create a Razorpay order using async httpx — never blocks the event loop."""
-    if not settings.razorpay_key_id or not settings.razorpay_key_secret:
-        raise HTTPException(status_code=503, detail="Payment service not configured.")
+    """Create a Razorpay order via Lambda proxy (Lambda has outbound internet; App Runner VPC does not)."""
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(
-                "https://api.razorpay.com/v1/orders",
-                json=payload,
-                auth=(settings.razorpay_key_id, settings.razorpay_key_secret),
-            )
-            if resp.status_code not in (200, 201):
-                logger.error("Razorpay API error %s: %s", resp.status_code, resp.text)
-                raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
-            return resp.json()
-    except httpx.TimeoutException:
-        logger.error("Razorpay API timed out")
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, _invoke_razorpay_lambda, payload),
+            timeout=22.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error("Razorpay Lambda invocation timed out")
         raise HTTPException(status_code=504, detail="Payment service timeout. Please try again.")
     except HTTPException:
         raise
     except Exception:
-        logger.error("Razorpay order creation failed", exc_info=True)
+        logger.error("Razorpay Lambda invocation failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
 
 
