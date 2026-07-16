@@ -87,6 +87,30 @@ def _require_admin(user):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorised")
 
 
+def _with_ratings(products: list, session: Session) -> list:
+    """Return ProductBase list with average_rating and review_count injected via one batch SQL query."""
+    if not products:
+        return []
+    product_ids = [p.id for p in products]
+    rows = (
+        session.query(
+            Rating.product_id,
+            func.avg(Rating.rating).label("avg_r"),
+            func.count(Rating.id).label("cnt_r"),
+        )
+        .filter(Rating.product_id.in_(product_ids))
+        .group_by(Rating.product_id)
+        .all()
+    )
+    rating_map = {r.product_id: (round(float(r.avg_r), 1), int(r.cnt_r)) for r in rows}
+    result = []
+    for p in products:
+        pb = ProductBase.from_orm(p)
+        avg, cnt = rating_map.get(p.id, (0.0, 0))
+        result.append(pb.model_copy(update={"average_rating": avg, "review_count": cnt}))
+    return result
+
+
 def _get_product_or_404(product_id: str, session: Session) -> Product:
     try:
         uid = UUID(product_id)
@@ -187,7 +211,7 @@ async def get_products_by_category_slug(
     products = q.offset(skip).limit(limit).all()
 
     return ProductListResponse(
-        data=[ProductBase.from_orm(p) for p in products],
+        data=_with_ratings(products, session),
         totalCount=total,
         page=(skip // limit) + 1 if limit else 1,
         limit=limit,
@@ -455,7 +479,7 @@ async def get_featured_products(
         .limit(limit)
         .all()
     )
-    return ProductListResponse(data=[ProductBase.from_orm(p) for p in products], totalCount=len(products))
+    return ProductListResponse(data=_with_ratings(products, session), totalCount=len(products))
 
 
 @product_router.get("/search", response_model=ProductListResponse)
@@ -518,7 +542,7 @@ async def search_products(
     )
 
     return ProductListResponse(
-        data=[ProductBase.from_orm(p) for p in results],
+        data=_with_ratings(results, session),
         totalCount=total,
         page=(skip // limit) + 1 if limit else 1,
         limit=limit,
@@ -626,30 +650,8 @@ async def get_product_list(
 
     products = q.offset(skip).limit(limit).all()
 
-    # Batch-fetch rating aggregates so every product card shows real stars
-    rating_map: dict = {}
-    if products:
-        product_ids = [p.id for p in products]
-        rows = (
-            session.query(
-                Rating.product_id,
-                func.avg(Rating.rating).label("avg_r"),
-                func.count(Rating.id).label("cnt_r"),
-            )
-            .filter(Rating.product_id.in_(product_ids))
-            .group_by(Rating.product_id)
-            .all()
-        )
-        rating_map = {r.product_id: (round(float(r.avg_r), 1), int(r.cnt_r)) for r in rows}
-
-    batch = []
-    for p in products:
-        pb = ProductBase.from_orm(p)
-        avg, cnt = rating_map.get(p.id, (0.0, 0))
-        batch.append(pb.model_copy(update={"average_rating": avg, "review_count": cnt}))
-
     return ProductListResponse(
-        data=batch,
+        data=_with_ratings(products, session),
         totalCount=total,
         page=(skip // limit) + 1 if limit else 1,
         limit=limit,
