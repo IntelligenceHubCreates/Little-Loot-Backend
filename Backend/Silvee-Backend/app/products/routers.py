@@ -22,6 +22,7 @@ from uuid import UUID
 
 import cloudinary
 import cloudinary.uploader
+import cloudinary.utils
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import or_, text, func
 from sqlalchemy.orm import Session
@@ -721,6 +722,38 @@ async def link_color_variants(
         "linked":   updated,
         "group_id": payload.variant_group_id,
     }
+
+
+@product_router.get("/cloudinary-signature")
+async def get_cloudinary_upload_signature(
+    folder: str = Query("littleloot/products"),
+    user=Depends(JWTBearer()),
+):
+    """Return a short-lived Cloudinary upload signature so the browser can upload
+    directly to Cloudinary.  The backend runs in a private VPC with no internet
+    egress, so all Cloudinary uploads must originate from the client.
+    The signature is pure HMAC-SHA256 — no network call is made here.
+    """
+    _require_admin(user)
+    ALLOWED_FOLDERS = {
+        "littleloot/products",
+        "littleloot/products/colors",
+        "littleloot/products/videos",
+    }
+    if folder not in ALLOWED_FOLDERS:
+        folder = "littleloot/products"
+    import time
+    timestamp = int(time.time())
+    params_to_sign = {"timestamp": timestamp, "folder": folder}
+    signature = cloudinary.utils.api_sign_request(params_to_sign, settings.cloudinary_api_secret)
+    return {
+        "signature":  signature,
+        "timestamp":  timestamp,
+        "cloud_name": settings.cloudinary_cloud_name,
+        "api_key":    settings.cloudinary_api_key,
+        "folder":     folder,
+    }
+
 
 @product_router.get("/{id}", response_model=dict)
 async def get_product_detail(id: str, session: Session = Depends(get_db)):
