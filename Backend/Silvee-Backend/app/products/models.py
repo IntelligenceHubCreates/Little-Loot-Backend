@@ -153,6 +153,8 @@ class ProductBase(BaseModel):
     is_active:            bool         = True
     offer_expiration_date: Optional[datetime]
     created_at:           Optional[datetime]
+    average_rating:       float        = 0.0
+    review_count:         int          = 0
 
     class Config:
         from_attributes = True

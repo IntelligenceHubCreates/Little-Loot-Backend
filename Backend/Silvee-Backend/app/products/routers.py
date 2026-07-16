@@ -626,8 +626,30 @@ async def get_product_list(
 
     products = q.offset(skip).limit(limit).all()
 
+    # Batch-fetch rating aggregates so every product card shows real stars
+    rating_map: dict = {}
+    if products:
+        product_ids = [p.id for p in products]
+        rows = (
+            session.query(
+                Rating.product_id,
+                func.avg(Rating.rating).label("avg_r"),
+                func.count(Rating.id).label("cnt_r"),
+            )
+            .filter(Rating.product_id.in_(product_ids))
+            .group_by(Rating.product_id)
+            .all()
+        )
+        rating_map = {r.product_id: (round(float(r.avg_r), 1), int(r.cnt_r)) for r in rows}
+
+    batch = []
+    for p in products:
+        pb = ProductBase.from_orm(p)
+        avg, cnt = rating_map.get(p.id, (0.0, 0))
+        batch.append(pb.model_copy(update={"average_rating": avg, "review_count": cnt}))
+
     return ProductListResponse(
-        data=[ProductBase.from_orm(p) for p in products],
+        data=batch,
         totalCount=total,
         page=(skip // limit) + 1 if limit else 1,
         limit=limit,
@@ -774,6 +796,7 @@ async def get_product_detail(id: str, session: Session = Depends(get_db)):
 
     payload = ProductBase.from_orm(product).dict()
     payload["rating"] = avg_rating
+    payload["average_rating"] = avg_rating
     payload["review_count"] = review_count
     return {"product_details": payload}
 # ═══════════════════════════════════════════════════════════════════
