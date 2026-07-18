@@ -824,6 +824,8 @@ async def add_new_product(
     productVariantGroupId: Optional[str]    = Form(None),
     productColorVariants:  Optional[str]    = Form(None),
      productVideo:         Optional[str] = Form(None),
+    productIsFeatured:    Optional[str] = Form(None),
+    productIsNew:         Optional[str] = Form(None),
     user=Depends(JWTBearer()),
     session: Session = Depends(get_db),
 ):
@@ -859,6 +861,8 @@ async def add_new_product(
         variant_group_id=productVariantGroupId or None,
         color_variants = json.loads(productColorVariants) if productColorVariants else [],
         product_video = productVideo or None,
+        is_featured = productIsFeatured == 'true',
+        is_new      = productIsNew      == 'true',
     )
     _sync_product_subcategory(new_product, session)
     session.add(new_product)
@@ -976,6 +980,8 @@ async def update_product(
     productColorVariants:  Optional[str]    = Form(None),
     productVideo:          Optional[str] = Form(None),
     deleteVideo:           Optional[str] = Form(None),
+    productIsFeatured:     Optional[str] = Form(None),
+    productIsNew:          Optional[str] = Form(None),
     user=Depends(JWTBearer()),
     session: Session = Depends(get_db),
 ):
@@ -1021,6 +1027,10 @@ async def update_product(
     elif productVideo is not None:
         product.product_video = productVideo or None
 
+    if productIsFeatured is not None:
+        product.is_featured = productIsFeatured == 'true'
+    if productIsNew is not None:
+        product.is_new = productIsNew == 'true'
 
     _sync_product_subcategory(product, session)
 
