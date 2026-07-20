@@ -1,9 +1,10 @@
+import time
 import uuid
-from typing import Optional, List
+from typing import Optional
 
 import cloudinary
-import cloudinary.uploader
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+import cloudinary.utils
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -18,8 +19,8 @@ cloudinary.config(
     api_secret=settings.cloudinary_api_secret,
 )
 
-public_feedback_router  = APIRouter(prefix="/api/feedback",       tags=["Feedback"])
-admin_feedback_router   = APIRouter(prefix="/api/admin/feedback",  tags=["Admin - Feedback"])
+public_feedback_router = APIRouter(prefix="/api/feedback",      tags=["Feedback"])
+admin_feedback_router  = APIRouter(prefix="/api/admin/feedback", tags=["Admin - Feedback"])
 
 
 def _admin(user):
@@ -53,6 +54,32 @@ def list_active_feedback(db: Session = Depends(get_db)):
         .all()
     )
     return [_serialize(i) for i in items]
+
+
+# ── Admin: Cloudinary signed-upload params (browser uploads directly) ─────────
+# The VPC has no NAT so the backend cannot call Cloudinary directly.
+# Instead we generate a signed request the browser uses to upload to Cloudinary.
+
+@admin_feedback_router.get("/upload-signature")
+def get_upload_signature(
+    resource_type: str = "image",
+    user: dict = Depends(JWTBearer()),
+):
+    _admin(user)
+    if resource_type not in ("image", "video"):
+        raise HTTPException(status_code=422, detail="resource_type must be 'image' or 'video'")
+    timestamp = int(time.time())
+    folder = "littleloot/feedback"
+    params_to_sign = {"folder": folder, "timestamp": timestamp}
+    signature = cloudinary.utils.api_sign_request(params_to_sign, settings.cloudinary_api_secret)
+    return {
+        "timestamp":     timestamp,
+        "signature":     signature,
+        "api_key":       settings.cloudinary_api_key,
+        "cloud_name":    settings.cloudinary_cloud_name,
+        "folder":        folder,
+        "resource_type": resource_type,
+    }
 
 
 # ── Admin CRUD ─────────────────────────────────────────────────────────────────
@@ -143,43 +170,3 @@ def admin_delete_feedback(
         raise HTTPException(status_code=404, detail="Feedback item not found")
     db.delete(item)
     db.commit()
-
-
-# ── Admin: Cloudinary upload endpoint ─────────────────────────────────────────
-
-@admin_feedback_router.post("/upload-media")
-async def upload_feedback_media(
-    file: UploadFile = File(...),
-    user: dict       = Depends(JWTBearer()),
-):
-    _admin(user)
-    content_type = file.content_type or ""
-    is_video     = content_type.startswith("video/")
-    is_image     = content_type.startswith("image/")
-    if not is_video and not is_image:
-        raise HTTPException(status_code=422, detail="Only image or video files are accepted")
-
-    data = await file.read()
-    try:
-        result = cloudinary.uploader.upload(
-            data,
-            folder          = "littleloot/feedback",
-            resource_type   = "video" if is_video else "image",
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cloudinary upload failed: {e}")
-
-    secure_url = result.get("secure_url", "")
-    thumbnail  = None
-    if is_video:
-        # Derive a JPEG thumbnail from the video public_id
-        pub = result.get("public_id", "")
-        thumbnail = cloudinary.CloudinaryVideo(pub).build_url(
-            format="jpg", transformation=[{"width": 200, "crop": "fill"}]
-        )
-
-    return {
-        "url":           secure_url,
-        "thumbnail_url": thumbnail,
-        "resource_type": "video" if is_video else "image",
-    }
