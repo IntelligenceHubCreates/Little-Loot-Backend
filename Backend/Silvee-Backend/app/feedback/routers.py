@@ -42,7 +42,7 @@ def _serialize(f: CustomerFeedback) -> dict:
     }
 
 
-# ── Public endpoint ────────────────────────────────────────────────────────────
+# ── Public endpoints ───────────────────────────────────────────────────────────
 
 @public_feedback_router.get("")
 def list_active_feedback(db: Session = Depends(get_db)):
@@ -54,6 +54,55 @@ def list_active_feedback(db: Session = Depends(get_db)):
         .all()
     )
     return [_serialize(i) for i in items]
+
+
+# Public: Cloudinary signed-upload for user-submitted stories (no auth)
+# Backend never makes outbound calls — just signs the params with the secret.
+
+@public_feedback_router.get("/user-upload-signature")
+def get_user_upload_signature(resource_type: str = "image"):
+    if resource_type not in ("image", "video"):
+        raise HTTPException(status_code=422, detail="resource_type must be 'image' or 'video'")
+    timestamp = int(time.time())
+    folder = "littleloot/feedback/user"
+    params_to_sign = {"folder": folder, "timestamp": timestamp}
+    signature = cloudinary.utils.api_sign_request(params_to_sign, settings.cloudinary_api_secret)
+    return {
+        "timestamp":     timestamp,
+        "signature":     signature,
+        "api_key":       settings.cloudinary_api_key,
+        "cloud_name":    settings.cloudinary_cloud_name,
+        "folder":        folder,
+        "resource_type": resource_type,
+    }
+
+
+class UserFeedbackSubmit(BaseModel):
+    customer_name: str
+    image_url:     Optional[str] = None
+    video_url:     Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    caption:       Optional[str] = None
+
+
+@public_feedback_router.post("/submit", status_code=201)
+def submit_user_feedback(body: UserFeedbackSubmit, db: Session = Depends(get_db)):
+    if not body.customer_name.strip():
+        raise HTTPException(status_code=422, detail="Name is required")
+    if not body.caption and not body.image_url and not body.video_url:
+        raise HTTPException(status_code=422, detail="Provide feedback text or a photo/video")
+    item = CustomerFeedback(
+        customer_name = body.customer_name.strip(),
+        image_url     = body.image_url,
+        video_url     = body.video_url,
+        thumbnail_url = body.thumbnail_url,
+        caption       = body.caption,
+        is_active     = False,  # pending admin approval
+        display_order = 0,
+    )
+    db.add(item)
+    db.commit()
+    return {"message": "Story submitted for review"}
 
 
 # ── Admin: Cloudinary signed-upload params (browser uploads directly) ─────────
