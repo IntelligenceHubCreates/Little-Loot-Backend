@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import resend
+from app.email.service import send_welcome_email
 from app.users.services import get_hashed_password, verify_password, handle_google_login
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
 from sqlalchemy.orm import Session
@@ -49,6 +50,9 @@ def register_user(request: Request, user: UserCreate, response: Response, sessio
     session.add(new_user)
     session.commit()
     session.refresh(new_user)
+
+    # ── Welcome email (fire-and-forget) ──────────────────────────────────────
+    send_welcome_email(user_email=new_user.email, user_name=new_user.name or "")
 
     access = create_access_token(new_user.id, session)
 

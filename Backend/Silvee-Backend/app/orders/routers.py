@@ -22,6 +22,11 @@ from app.orders.services import (
     create_order, get_user_orders, get_order, update_order,
     get_order_items, get_all_orders_admin, update_order_status_admin,
 )
+from app.email.service import (
+    send_order_shipped,
+    send_order_delivered,
+    send_order_cancelled,
+)
 from app.products.services import get_product
 from sqlalchemy import func, extract, or_, cast, String
 from datetime import datetime, timedelta
@@ -264,6 +269,50 @@ def _serialize_admin_order(o, payment_map: dict) -> dict:
     }
 
 
+def _serialize_order_items_for_email(order) -> list:
+    """Build item dicts for email templates from an Order ORM object."""
+    result = []
+    for oi in (getattr(order, "order_items", []) or []):
+        prod = getattr(oi, "product", None)
+        result.append({
+            "name":     (getattr(prod, "name", None) if prod else None) or "Product",
+            "quantity": int(getattr(oi, "quantity", 1) or 1),
+            "price":    float(getattr(oi, "price", 0) or 0),
+        })
+    return result
+
+
+def _send_status_email(db, order, new_status: str) -> None:
+    """Dispatch the right lifecycle email for an order status change."""
+    try:
+        customer = db.query(Users).filter(Users.id == order.user_id).first()
+        if not customer:
+            return
+        items      = _serialize_order_items_for_email(order)
+        order_id   = str(order.id)
+        total      = float(getattr(order, "total_amount", 0) or 0)
+        name       = customer.name or ""
+        email      = customer.email
+
+        if new_status == "shipped":
+            send_order_shipped(
+                user_email=email, user_name=name,
+                order_id=order_id, items=items, total=total,
+            )
+        elif new_status == "delivered":
+            send_order_delivered(
+                user_email=email, user_name=name,
+                order_id=order_id, items=items, total=total,
+            )
+        elif new_status == "cancelled":
+            send_order_cancelled(
+                user_email=email, user_name=name,
+                order_id=order_id, total=total, cancelled_by="admin",
+            )
+    except Exception:
+        logger.warning("Status-change email failed for order %s → %s", order.id, new_status, exc_info=True)
+
+
 @router.get("/admin/orders")
 async def get_all_orders(
     skip: int = 0,
@@ -350,6 +399,10 @@ async def admin_update_order_status(
     order = update_order_status_admin(db, order_id, new_status)  # stores lowercase
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    # ── Lifecycle email notifications (fire-and-forget) ──────────────────────
+    _send_status_email(db, order, new_status)
+
     return {"id": str(order.id), "status": order.status}
 
 # ── CREATE ORDER — color fields copied from payload ───────────────
@@ -541,6 +594,20 @@ async def cancel_user_order(
         db_order.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(db_order)
+
+        # ── Cancellation email (fire-and-forget) ─────────────────────────────
+        try:
+            customer = db.query(Users).filter(Users.id == db_order.user_id).first()
+            if customer:
+                send_order_cancelled(
+                    user_email=customer.email,
+                    user_name=customer.name or "",
+                    order_id=str(db_order.id),
+                    total=float(getattr(db_order, "total_amount", 0) or 0),
+                    cancelled_by="you",
+                )
+        except Exception:
+            logger.warning("Cancellation email failed for order %s", db_order.id, exc_info=True)
 
         if isinstance(db_order.id,      uuid.UUID): db_order.id      = str(db_order.id)
         if isinstance(db_order.user_id, uuid.UUID): db_order.user_id = str(db_order.user_id)

@@ -12,13 +12,13 @@ import json as _json
 import boto3
 from botocore.config import Config
 import razorpay
-import resend
 from fastapi import APIRouter, Depends, HTTPException, Request
 from app.limiter import limiter
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.email.service import send_order_confirmed
 from app.payments.models import PaymentOrder
 from app.settings import settings
 from app.users.utils import JWTBearer
@@ -84,64 +84,6 @@ async def create_razorpay_order_async(payload: dict) -> dict:
     except Exception:
         logger.error("Razorpay Lambda invocation failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Payment service error. Please try again.")
-
-
-def _send_order_confirmation(user_email: str, user_name: str, order_id: str, total: float, items: list) -> None:
-    """Send a branded order-confirmation email via Resend. Never raises."""
-    if not settings.resend_api_key:
-        return
-    try:
-        order_short = str(order_id)[:8].upper()
-        items_html = "".join(
-            f"<tr><td style='padding:8px 0;color:#5B4266;font-size:14px'>"
-            f"{it.get('name', 'Product')} &times; {it.get('quantity', 1)}</td>"
-            f"<td style='padding:8px 0;color:#3B0F4E;font-weight:700;font-size:14px;text-align:right'>"
-            f"&#8377;{float(it.get('price', 0)) * int(it.get('quantity', 1)):.0f}</td></tr>"
-            for it in items
-        )
-        resend.api_key = settings.resend_api_key
-        resend.Emails.send({
-            "from": f"Little Loot <{settings.resend_from_email}>",
-            "to":   [user_email],
-            "subject": f"Order confirmed! #{order_short} — Little Loot",
-            "html": f"""
-            <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#FFFDF9">
-              <div style="text-align:center;margin-bottom:28px">
-                <h1 style="font-size:24px;font-weight:800;color:#3B0F4E;margin:0">Little Loot</h1>
-              </div>
-              <div style="background:#fff;border-radius:16px;padding:28px 24px;border:1.5px solid #EFE7EC">
-                <div style="text-align:center;margin-bottom:20px">
-                  <h2 style="font-size:20px;font-weight:800;color:#3B0F4E;margin:8px 0 4px">Order Confirmed!</h2>
-                  <p style="color:#8A7891;font-size:13px;margin:0">Order #{order_short}</p>
-                </div>
-                <p style="color:#5B4266;font-size:14px;line-height:1.7;margin:0 0 20px">
-                  Hi {user_name or 'there'},<br>
-                  Thank you for shopping with Little Loot! We are packing your order with love.
-                </p>
-                <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
-                  {items_html}
-                  <tr style="border-top:1.5px solid #EFE7EC">
-                    <td style="padding:12px 0 0;color:#3B0F4E;font-weight:800;font-size:16px">Total Paid</td>
-                    <td style="padding:12px 0 0;color:#FF4D6A;font-weight:800;font-size:16px;text-align:right">
-                      &#8377;{total:.0f}</td>
-                  </tr>
-                </table>
-                <a href="{settings.frontend_url}/track-order"
-                   style="display:block;text-align:center;background:linear-gradient(135deg,#FF4D6A,#E03A55);
-                          color:#fff;font-weight:700;font-size:15px;padding:14px 24px;
-                          border-radius:10px;text-decoration:none;margin-top:20px">
-                  Track My Order &rarr;
-                </a>
-              </div>
-              <p style="text-align:center;color:#8A7891;font-size:11px;margin-top:20px">
-                Questions? Contact us at support@littleloot.in<br>
-                &copy; Little Loot &mdash; gifts that spark joy
-              </p>
-            </div>
-            """,
-        })
-    except Exception:
-        logger.warning("Order confirmation email failed for order %s", order_id, exc_info=False)
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────
@@ -363,12 +305,24 @@ async def verify_payment(
     if uid:
         customer = session.query(Users).filter(Users.id == uuid.UUID(uid)).first()
         if customer:
-            _send_order_confirmation(
+            email_items = [
+                {
+                    "name":     (oi.product.name if oi.product else None) or "Product",
+                    "quantity": int(oi.quantity or 1),
+                    "price":    float(oi.price or 0),
+                }
+                for oi in db_order.order_items
+            ]
+            send_order_confirmed(
                 user_email=customer.email,
                 user_name=customer.name or "",
                 order_id=str(db_order.id),
+                items=email_items,
+                subtotal=float(snap.get("subtotal") or 0),
+                discount=float(snap.get("discount") or 0),
+                delivery=float(snap.get("delivery") or 0),
                 total=float(snap.get("total", order.amount / 100)),
-                items=items,
+                shipping_address=shipping_str,
             )
 
     return VerifyPaymentResponse(
