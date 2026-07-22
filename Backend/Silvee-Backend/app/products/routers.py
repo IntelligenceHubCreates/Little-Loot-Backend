@@ -817,7 +817,6 @@ async def add_new_product(
     productDiscount:       int                       = Form(...),
     productDiscountAmount: int                       = Form(...),
     productImages:         Optional[List[UploadFile]] = File(None),
-    productImageUrls:      Optional[Any]             = Form(None),
     offerExpirationDate:   Optional[datetime]        = Form(None),
     productColor:          Optional[str]    = Form(None),
     productColorHex:       Optional[str]    = Form(None),
@@ -834,10 +833,8 @@ async def add_new_product(
         raise HTTPException(status_code=400, detail="Price must be greater than 0")
 
     form_data = await request.form()
-    productDetails = [str(v) for v in form_data.getlist('productDetails') if v and str(v).strip()]
-
-    if isinstance(productImageUrls, str):
-        productImageUrls = [productImageUrls]
+    productDetails   = [str(v) for v in form_data.getlist('productDetails')   if v and str(v).strip()]
+    productImageUrls = [str(v) for v in form_data.getlist('productImageUrls') if v and str(v).strip()]
 
     images = await upload_images(productImages) if productImages else []
     if productImageUrls:
@@ -973,7 +970,6 @@ async def update_product(
     productDiscount:       int                       = Form(...),
     productDiscountAmount: int                       = Form(...),
     productImages:         List[UploadFile]          = File(None),
-    productImageUrls:      Optional[Any]             = Form(None),
     oldProductImages:      str                       = Form(...),
     productColor:          Optional[str]    = Form(None),
     productColorHex:       Optional[str]    = Form(None),
@@ -993,10 +989,8 @@ async def update_product(
     product = _get_product_or_404(id, session)
 
     form_data = await request.form()
-    productDetails = [str(v) for v in form_data.getlist('productDetails') if v and str(v).strip()]
-
-    if isinstance(productImageUrls, str):
-        productImageUrls = [productImageUrls]
+    productDetails   = [str(v) for v in form_data.getlist('productDetails')   if v and str(v).strip()]
+    productImageUrls = [str(v) for v in form_data.getlist('productImageUrls') if v and str(v).strip()]
 
     existing_images = json.loads(oldProductImages) if oldProductImages else []
     new_uploads = await upload_images(productImages or [])
