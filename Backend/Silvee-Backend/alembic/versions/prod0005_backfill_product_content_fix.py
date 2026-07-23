@@ -45,6 +45,9 @@ def _array_sql(items: list[str]) -> str:
 
 
 def upgrade() -> None:
+    # prod0003 was fixed directly. This migration is a no-op.
+    print("[prod0005] No-op: prod0003 handles all backfill logic.")
+    return
     data_path = os.path.join(
         os.path.dirname(__file__), "..", "data", "little_loot_product_content.json"
     )

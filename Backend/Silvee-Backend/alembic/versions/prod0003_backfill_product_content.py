@@ -24,13 +24,15 @@ branch_labels = None
 depends_on = None
 
 
-def _pg_array_str(items: list[str]) -> str:
-    """Convert a Python list to a PostgreSQL text[] string literal like {"a","b"}."""
-    parts = []
-    for item in items:
-        safe = item.replace("\\", "\\\\").replace('"', '\\"')
-        parts.append(f'"{safe}"')
-    return "{" + ",".join(parts) + "}"
+def _array_sql(items: list[str]) -> str:
+    """Build ARRAY['a','b',...] literal for direct embedding in SQL.
+
+    Using :param::text[] after a bind parameter breaks psycopg2's parser,
+    so we embed the array literal directly. Values are from our own JSON only.
+    Single-quotes are doubled (SQL standard escaping).
+    """
+    escaped = [f"'{item.replace(chr(39), chr(39) * 2)}'" for item in items]
+    return "ARRAY[" + ", ".join(escaped) + "]"
 
 
 def upgrade() -> None:
@@ -55,21 +57,26 @@ def upgrade() -> None:
         if not description or not details:
             continue
 
-        details_param = _pg_array_str(details)
+        # Embed array literal directly — avoids :param::text[] psycopg2 parse bug
+        array_literal = _array_sql(details)
 
         result = conn.execute(
             sa.text(
-                """
+                f"""
                 UPDATE products
                 SET    description = :description,
-                       details     = :details::text[]
+                       details     = {array_literal}
                 WHERE  LOWER(TRIM(name)) = LOWER(TRIM(:source_name))
-                  AND  (details IS NULL OR cardinality(details) = 0)
+                  AND  (
+                       details IS NULL
+                    OR cardinality(details) = 0
+                    OR EXISTS (SELECT 1 FROM unnest(details) d WHERE d LIKE 'Detail point%%')
+                    OR description LIKE '%%available at Little Loot%%'
+                  )
                 """
             ),
             {
                 "description": description,
-                "details": details_param,
                 "source_name": source_name,
             },
         )

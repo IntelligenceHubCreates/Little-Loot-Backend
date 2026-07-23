@@ -37,6 +37,10 @@ def _pg_array_str(items: list[str]) -> str:
 
 
 def upgrade() -> None:
+    # prod0003 was fixed to handle both empty and placeholder rows.
+    # This migration is intentionally a no-op.
+    print("[prod0004] No-op: prod0003 handles all backfill logic.")
+    return
     data_path = os.path.join(
         os.path.dirname(__file__), "..", "data", "little_loot_product_content.json"
     )
