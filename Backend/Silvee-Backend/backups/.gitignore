@@ -1,0 +1,3 @@
+# DB backups contain real user data — never commit
+*
+!.gitignore
