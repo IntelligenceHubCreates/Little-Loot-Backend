@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'step13_product_tags'
-down_revision: Union[str, None] = 'prod0001'
+down_revision: Union[str, None] = 'prod0005'
 branch_labels = None
 depends_on = None
 
