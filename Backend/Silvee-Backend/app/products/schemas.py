@@ -39,6 +39,9 @@ class ProductUpdate(BaseModel):
     variant_group_id:     Optional[str] = None
     color:                Optional[str] = None
     color_hex:            Optional[str] = None
+    recipients:           Optional[List[str]] = None
+    occasions:            Optional[List[str]] = None
+    pairs_with:           Optional[List[str]] = None
 
     class Config:
         from_attributes = True
@@ -68,6 +71,9 @@ class ProductResponse(BaseModel):
     is_active:            bool         = True
     offer_expiration_date: Optional[datetime]
     created_at:           Optional[datetime]
+    recipients:           List[str]    = []
+    occasions:            List[str]    = []
+    pairs_with:           List[str]    = []
 
     class Config:
         from_attributes = True

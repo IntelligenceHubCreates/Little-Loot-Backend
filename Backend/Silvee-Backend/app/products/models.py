@@ -89,6 +89,9 @@ class Product(Base):
     color_hex             = Column(String(7),  nullable=True)   # e.g. "#F4A7B9"
     color_variants        = Column(JSON, nullable=False, default=list)
     product_video         = Column(String(512), nullable=True)
+    recipients            = Column(ARRAY(String), nullable=False, default=list)  # e.g. ['little','her']
+    occasions             = Column(ARRAY(String), nullable=False, default=list)  # e.g. ['birthday','return']
+    pairs_with            = Column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
 
     # ─── Relationships ─────────────────────────────────────────────
     category_ref = relationship("Category", back_populates="products")
@@ -155,12 +158,19 @@ class ProductBase(BaseModel):
     created_at:           Optional[datetime]
     average_rating:       float        = 0.0
     review_count:         int          = 0
+    recipients:           List[str]    = []
+    occasions:            List[str]    = []
+    pairs_with:           List[str]    = []  # UUID strings
 
     class Config:
         from_attributes = True
 
     @validator("id", "category_id", pre=True)
     def uuid_to_str(cls, v):
+        return str(v) if v else None
+
+    @validator("pairs_with", pre=True, each_item=True)
+    def pairs_uuid_to_str(cls, v):
         return str(v) if v else None
 
 

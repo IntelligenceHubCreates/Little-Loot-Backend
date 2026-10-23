@@ -568,6 +568,8 @@ async def get_product_list(
     min_price:      Optional[int]  = Query(None, ge=0),
     max_price:      Optional[int]  = Query(None, ge=0),
     sort_by:        str           = Query("featured", regex="^(featured|price_asc|price_desc|newest|rating|stock_asc|stock_desc)$"),
+    recipient:      Optional[str] = Query(None, description="Filter by recipient tag, e.g. 'little', 'her'"),
+    occasion:       Optional[str] = Query(None, description="Filter by occasion tag, e.g. 'birthday', 'return'"),
     session:        Session       = Depends(get_db),
 ):
     q = session.query(Product)
@@ -618,6 +620,11 @@ async def get_product_list(
         q = q.filter(Product.is_new.is_(True))
     if is_featured:
         q = q.filter(Product.is_featured.is_(True))
+
+    if recipient:
+        q = q.filter(Product.recipients.any(recipient))
+    if occasion:
+        q = q.filter(Product.occasions.any(occasion))
 
     # ── Stock status (mutually-aware with in_stock above) ─────────
     if stock_status == "out_of_stock":
@@ -825,6 +832,9 @@ async def add_new_product(
      productVideo:         Optional[str] = Form(None),
     productIsFeatured:    Optional[str] = Form(None),
     productIsNew:         Optional[str] = Form(None),
+    productRecipients:    Optional[str] = Form(None),  # JSON: ["little","her"]
+    productOccasions:     Optional[str] = Form(None),  # JSON: ["birthday","return"]
+    productPairsWith:     Optional[str] = Form(None),  # JSON: ["uuid1","uuid2"]
     user=Depends(JWTBearer()),
     session: Session = Depends(get_db),
 ):
@@ -861,6 +871,9 @@ async def add_new_product(
         product_video = productVideo or None,
         is_featured = productIsFeatured == 'true',
         is_new      = productIsNew      == 'true',
+        recipients  = json.loads(productRecipients) if productRecipients else [],
+        occasions   = json.loads(productOccasions)  if productOccasions  else [],
+        pairs_with  = json.loads(productPairsWith)  if productPairsWith  else [],
     )
     _sync_product_subcategory(new_product, session)
     session.add(new_product)
@@ -979,6 +992,9 @@ async def update_product(
     deleteVideo:           Optional[str] = Form(None),
     productIsFeatured:     Optional[str] = Form(None),
     productIsNew:          Optional[str] = Form(None),
+    productRecipients:     Optional[str] = Form(None),  # JSON: ["little","her"]
+    productOccasions:      Optional[str] = Form(None),  # JSON: ["birthday","return"]
+    productPairsWith:      Optional[str] = Form(None),  # JSON: ["uuid1","uuid2"]
     user=Depends(JWTBearer()),
     session: Session = Depends(get_db),
 ):
@@ -1027,6 +1043,12 @@ async def update_product(
         product.is_featured = productIsFeatured == 'true'
     if productIsNew is not None:
         product.is_new = productIsNew == 'true'
+    if productRecipients is not None:
+        product.recipients = json.loads(productRecipients)
+    if productOccasions is not None:
+        product.occasions = json.loads(productOccasions)
+    if productPairsWith is not None:
+        product.pairs_with = json.loads(productPairsWith)
 
     _sync_product_subcategory(product, session)
 
