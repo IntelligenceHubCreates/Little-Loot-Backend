@@ -92,8 +92,11 @@ class CreateOrderRequest(BaseModel):
     amount: int
     cart_items: List[dict]
     shipping_address: dict
-    coupon_code: Optional[str] = None      # ← NEW
-    gift_message: Optional[str] = None     # ← NEW
+    coupon_code:  Optional[str]  = None
+    gift_message: Optional[str]  = None
+    gift_to:      Optional[str]  = None
+    gift_from:    Optional[str]  = None
+    hide_prices:  bool           = False
     notes: Optional[dict] = None
 
 class CreateOrderResponse(BaseModel):
@@ -183,7 +186,10 @@ async def create_payment_order(
     snapshot = {
         "items":        body.cart_items,
         "coupon_code":  coupon_code_norm,
-        "gift_message": (body.gift_message or "").strip()[:500] or None,
+        "gift_message": (body.gift_message or "").strip()[:150] or None,
+        "gift_to":      (body.gift_to      or "").strip()[:24]  or None,
+        "gift_from":    (body.gift_from    or "").strip()[:24]  or None,
+        "hide_prices":  body.hide_prices,
         "subtotal":     subtotal,
         "discount":     discount,
         "delivery":     delivery,
@@ -282,8 +288,11 @@ async def verify_payment(
         "subtotal":         snap.get("subtotal"),
         "discount_amount":  snap.get("discount") or 0,
         "delivery_fee":     snap.get("delivery") or 0,
-        "coupon_code":      snap.get("coupon_code"),
-        "gift_message":     snap.get("gift_message"),
+        "coupon_code":  snap.get("coupon_code"),
+        "gift_message": snap.get("gift_message"),
+        "gift_to":      snap.get("gift_to"),
+        "gift_from":    snap.get("gift_from"),
+        "hide_prices":  snap.get("hide_prices", False),
         "status":           "confirmed",
         "order_items":      order_items_data,
     }

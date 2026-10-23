@@ -1,7 +1,7 @@
 # app/orders/models.py
 from datetime import datetime
 from app.models import Base
-from sqlalchemy import Column, ForeignKey, Integer, String, DECIMAL, DateTime, Text, func
+from sqlalchemy import Column, ForeignKey, Integer, String, DECIMAL, DateTime, Text, func, Boolean
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 from sqlalchemy.orm import relationship
 import uuid
@@ -31,6 +31,9 @@ class Order(Base):
     delivery_fee    = Column(DECIMAL(20, 2), nullable=True, default=0)
     coupon_code     = Column(String(50),     nullable=True)          # which coupon was used
     gift_message = Column(String(500), nullable=True)
+    gift_to      = Column(String(24),  nullable=True)
+    gift_from    = Column(String(24),  nullable=True)
+    hide_prices  = Column(Boolean,     nullable=False, server_default='false', default=False)
 
 class OrderItem(Base):
     __tablename__ = "order_items"

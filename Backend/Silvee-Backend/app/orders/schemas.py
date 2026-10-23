@@ -35,7 +35,10 @@ class OrderBase(BaseModel):
     status:           str  = "confirmed"
     coupon_code:      Optional[str] = Field(None, max_length=50)
     order_items:      List[OrderItemBase] = Field(default=[], max_length=50)
-    gift_message:     Optional[str] = Field(None, max_length=500)
+    gift_message: Optional[str] = Field(None, max_length=150)
+    gift_to:      Optional[str] = Field(None, max_length=24)
+    gift_from:    Optional[str] = Field(None, max_length=24)
+    hide_prices:  bool          = False
 
 
 class OrderCreate(OrderBase):
@@ -65,6 +68,9 @@ class OrderResponse(OrderBase):
     created_at:  datetime
     updated_at:  datetime
     gift_message: Optional[str] = None
+    gift_to:      Optional[str] = None
+    gift_from:    Optional[str] = None
+    hide_prices:  bool          = False
 
     class Config:
         from_attributes = True

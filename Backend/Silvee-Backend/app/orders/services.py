@@ -63,7 +63,10 @@ def create_order(db: Session, user_id: str, order: dict) -> Order:
             discount_amount  = order.get('discount_amount') or 0,
             delivery_fee     = order.get('delivery_fee') or 0,
             coupon_code      = order.get('coupon_code'),
-            gift_message = (order.get('gift_message') or '').strip()[:500] or None,
+            gift_message = (order.get('gift_message') or '').strip()[:150] or None,
+            gift_to      = (order.get('gift_to')      or '').strip()[:24]  or None,
+            gift_from    = (order.get('gift_from')    or '').strip()[:24]  or None,
+            hide_prices  = bool(order.get('hide_prices', False)),
         )
         db.add(db_order)
         db.flush()

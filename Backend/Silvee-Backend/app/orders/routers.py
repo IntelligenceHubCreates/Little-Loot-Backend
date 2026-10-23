@@ -479,8 +479,6 @@ async def create_new_order(
         order_data["coupon_code"]     = coupon_obj.code if coupon_obj else None
         order_data["total_amount"]    = total_amount
         order_data["order_items"]     = enriched_items
-        order_data["gift_message"] = order.model_dump().get("gift_message")
-
         user_id  = user.get('id')
         db_order = create_order(db, user_id, order_data)
         return db_order
