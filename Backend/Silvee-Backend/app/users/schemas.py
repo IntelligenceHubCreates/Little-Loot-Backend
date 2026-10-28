@@ -6,7 +6,7 @@ from datetime import datetime
 class UserBase(BaseModel):
     email: EmailStr
     name: str
-    phone: str
+    phone: Optional[str] = None   # signup form marks it optional; column is nullable
 
 
 class UserCreate(UserBase):

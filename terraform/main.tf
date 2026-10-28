@@ -99,6 +99,29 @@ resource "aws_internet_gateway" "main" {
   tags   = { Name = "${var.project_name}-igw" }
 }
 
+# Cost cut (2026-10-28): the DB subnets route to the internet gateway so the now-public
+# RDS is reachable from App Runner's default (public) egress. This replaced a ~$35/mo NAT.
+# Created by hand first; import before the next apply:
+#   terraform import aws_route_table.public rtb-0c4415a6b18eb1fcd
+#   terraform import 'aws_route_table_association.public[0]' subnet-0d33473cb1528f66a/rtb-0c4415a6b18eb1fcd
+#   terraform import 'aws_route_table_association.public[1]' subnet-07465c52d68a86078/rtb-0c4415a6b18eb1fcd
+#   terraform import aws_db_parameter_group.main littleloot-postgres15
+#   terraform import aws_security_group_rule.rds_public sg-0b61aca12cdb27e97_ingress_tcp_5432_5432_0.0.0.0/0
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+  tags = { Name = "${var.project_name}-public" }
+}
+
+resource "aws_route_table_association" "public" {
+  count          = length(aws_subnet.private)
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
 # ── Security Groups ───────────────────────────────────────────────────────────
 
 # RDS: allow inbound PostgreSQL only from App Runner via VPC connector
@@ -123,6 +146,18 @@ resource "aws_security_group" "rds" {
   }
 
   tags = { Name = "${var.project_name}-rds-sg" }
+}
+
+# App Runner's public egress has no fixed IPs, so 5432 is open to the internet.
+# Protection: SSL forced (rds.force_ssl) + 32-char generated password.
+resource "aws_security_group_rule" "rds_public" {
+  type              = "ingress"
+  description       = "App Runner public egress (SSL forced, strong password)"
+  from_port         = 5432
+  to_port           = 5432
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.rds.id
 }
 
 # App Runner VPC Connector security group
@@ -157,16 +192,27 @@ resource "random_password" "db_password" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
+resource "aws_db_parameter_group" "main" {
+  name        = "${var.project_name}-postgres15"
+  family      = "postgres15"
+  description = "Little Loot: force SSL"
+  parameter {
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
+  }
+}
+
 resource "aws_db_instance" "main" {
   identifier = "${var.project_name}-db"
 
-  engine               = "postgres"
-  engine_version       = "15.18"
-  instance_class       = var.db_instance_class
-  allocated_storage    = var.db_allocated_storage
+  engine                = "postgres"
+  engine_version        = "15.18"
+  instance_class        = var.db_instance_class
+  allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_max_allocated_storage
-  storage_type         = "gp3"
-  storage_encrypted    = true
+  storage_type          = "gp3"
+  storage_encrypted     = true
 
   db_name  = var.db_name
   username = "${var.project_name}admin"
@@ -175,20 +221,21 @@ resource "aws_db_instance" "main" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
-  multi_az                    = var.db_multi_az
-  publicly_accessible         = false
-  deletion_protection         = true
-  skip_final_snapshot         = false
-  final_snapshot_identifier   = "${var.project_name}-final-snapshot"
-  backup_retention_period     = 7
-  backup_window               = "03:00-04:00"   # UTC 08:30–09:30 IST
-  maintenance_window          = "sun:04:00-sun:05:00"
-  auto_minor_version_upgrade  = true
+  multi_az                     = var.db_multi_az
+  parameter_group_name         = aws_db_parameter_group.main.name
+  publicly_accessible          = true # see aws_security_group_rule.rds_public
+  deletion_protection          = true
+  skip_final_snapshot          = false
+  final_snapshot_identifier    = "${var.project_name}-final-snapshot"
+  backup_retention_period      = 7
+  backup_window                = "03:00-04:00" # UTC 08:30–09:30 IST
+  maintenance_window           = "sun:04:00-sun:05:00"
+  auto_minor_version_upgrade   = true
   performance_insights_enabled = true
 
   lifecycle {
     prevent_destroy = true
-    ignore_changes  = [password]   # Rotated via Secrets Manager, not Terraform
+    ignore_changes  = [password] # Rotated via Secrets Manager, not Terraform
   }
 
   tags = { Name = "${var.project_name}-db" }
@@ -211,31 +258,31 @@ resource "aws_secretsmanager_secret_version" "app_initial" {
   # Initial skeleton — operator MUST update these values after first apply.
   # Terraform stores this in state; use `terraform output` or the AWS console to check.
   secret_string = jsonencode({
-    POSTGRES_USER                = "${var.project_name}admin"
-    POSTGRES_PASSWORD            = random_password.db_password.result
-    POSTGRES_SERVER              = aws_db_instance.main.address
-    POSTGRES_PORT                = "5432"
-    POSTGRES_DB                  = var.db_name
-    DATABASE_URL                 = "postgresql://${var.project_name}admin:${random_password.db_password.result}@${aws_db_instance.main.address}:5432/${var.db_name}"
-    SECRET_KEY                   = "REPLACE_AFTER_APPLY_openssl_rand_base64_32"
-    ALGORITHM                    = "HS256"
-    CLOUDINARY_CLOUD_NAME        = "REPLACE_WITH_CLOUDINARY_CLOUD_NAME"
-    CLOUDINARY_API_KEY           = "REPLACE_WITH_CLOUDINARY_API_KEY"
-    CLOUDINARY_API_SECRET        = "REPLACE_WITH_CLOUDINARY_API_SECRET"
-    RAZORPAY_KEY_ID              = "REPLACE_WITH_RAZORPAY_KEY_ID"
-    RAZORPAY_KEY_SECRET          = "REPLACE_WITH_RAZORPAY_KEY_SECRET"
-    RAZORPAY_WEBHOOK_SECRET      = "REPLACE_WITH_RAZORPAY_WEBHOOK_SECRET"
-    RESEND_API_KEY               = "REPLACE_WITH_RESEND_API_KEY"
-    RESEND_FROM_EMAIL            = "noreply@littlelootgifts.com"
-    INITIAL_ADMIN_EMAIL          = "REPLACE_WITH_ADMIN_EMAIL"
-    INITIAL_ADMIN_PASSWORD_HASH  = "REPLACE_WITH_BCRYPT_HASH"
-    ENVIRONMENT                  = "production"
-    ALLOWED_ORIGINS              = "https://littlelootgifts.com,https://www.littlelootgifts.com"
-    FRONTEND_URL                 = "https://littlelootgifts.com"
+    POSTGRES_USER               = "${var.project_name}admin"
+    POSTGRES_PASSWORD           = random_password.db_password.result
+    POSTGRES_SERVER             = aws_db_instance.main.address
+    POSTGRES_PORT               = "5432"
+    POSTGRES_DB                 = var.db_name
+    DATABASE_URL                = "postgresql://${var.project_name}admin:${random_password.db_password.result}@${aws_db_instance.main.address}:5432/${var.db_name}"
+    SECRET_KEY                  = "REPLACE_AFTER_APPLY_openssl_rand_base64_32"
+    ALGORITHM                   = "HS256"
+    CLOUDINARY_CLOUD_NAME       = "REPLACE_WITH_CLOUDINARY_CLOUD_NAME"
+    CLOUDINARY_API_KEY          = "REPLACE_WITH_CLOUDINARY_API_KEY"
+    CLOUDINARY_API_SECRET       = "REPLACE_WITH_CLOUDINARY_API_SECRET"
+    RAZORPAY_KEY_ID             = "REPLACE_WITH_RAZORPAY_KEY_ID"
+    RAZORPAY_KEY_SECRET         = "REPLACE_WITH_RAZORPAY_KEY_SECRET"
+    RAZORPAY_WEBHOOK_SECRET     = "REPLACE_WITH_RAZORPAY_WEBHOOK_SECRET"
+    RESEND_API_KEY              = "REPLACE_WITH_RESEND_API_KEY"
+    RESEND_FROM_EMAIL           = "noreply@littlelootgifts.com"
+    INITIAL_ADMIN_EMAIL         = "REPLACE_WITH_ADMIN_EMAIL"
+    INITIAL_ADMIN_PASSWORD_HASH = "REPLACE_WITH_BCRYPT_HASH"
+    ENVIRONMENT                 = "production"
+    ALLOWED_ORIGINS             = "https://littlelootgifts.com,https://www.littlelootgifts.com"
+    FRONTEND_URL                = "https://littlelootgifts.com"
   })
 
   lifecycle {
-    ignore_changes = [secret_string]   # Updated manually / via rotation, not Terraform
+    ignore_changes = [secret_string] # Updated manually / via rotation, not Terraform
   }
 }
 
@@ -319,40 +366,40 @@ resource "aws_apprunner_service" "backend" {
         # and the app can use boto3 to fetch at startup if needed.
         # For now: pass critical vars explicitly; the rest come from the secret.
         runtime_environment_variables = {
-          ENVIRONMENT         = "production"
-          PORT                = "8000"
-          GUNICORN_WORKERS    = "2"
-          AWS_SECRETS_ARN     = aws_secretsmanager_secret.app.arn
-          AWS_REGION          = var.aws_region
+          ENVIRONMENT      = "production"
+          PORT             = "8000"
+          GUNICORN_WORKERS = "2"
+          AWS_SECRETS_ARN  = aws_secretsmanager_secret.app.arn
+          AWS_REGION       = var.aws_region
         }
 
         # Native Secrets Manager injection (each key becomes an env var)
         runtime_environment_secrets = {
-          DATABASE_URL            = "${aws_secretsmanager_secret.app.arn}:DATABASE_URL::"
-          SECRET_KEY              = "${aws_secretsmanager_secret.app.arn}:SECRET_KEY::"
-          ALGORITHM               = "${aws_secretsmanager_secret.app.arn}:ALGORITHM::"
-          CLOUDINARY_CLOUD_NAME   = "${aws_secretsmanager_secret.app.arn}:CLOUDINARY_CLOUD_NAME::"
-          CLOUDINARY_API_KEY      = "${aws_secretsmanager_secret.app.arn}:CLOUDINARY_API_KEY::"
-          CLOUDINARY_API_SECRET   = "${aws_secretsmanager_secret.app.arn}:CLOUDINARY_API_SECRET::"
-          RAZORPAY_KEY_ID         = "${aws_secretsmanager_secret.app.arn}:RAZORPAY_KEY_ID::"
-          RAZORPAY_KEY_SECRET     = "${aws_secretsmanager_secret.app.arn}:RAZORPAY_KEY_SECRET::"
-          RAZORPAY_WEBHOOK_SECRET = "${aws_secretsmanager_secret.app.arn}:RAZORPAY_WEBHOOK_SECRET::"
-          RESEND_API_KEY          = "${aws_secretsmanager_secret.app.arn}:RESEND_API_KEY::"
-          RESEND_FROM_EMAIL       = "${aws_secretsmanager_secret.app.arn}:RESEND_FROM_EMAIL::"
-          FRONTEND_URL            = "${aws_secretsmanager_secret.app.arn}:FRONTEND_URL::"
-          ALLOWED_ORIGINS         = "${aws_secretsmanager_secret.app.arn}:ALLOWED_ORIGINS::"
-          INITIAL_ADMIN_EMAIL     = "${aws_secretsmanager_secret.app.arn}:INITIAL_ADMIN_EMAIL::"
+          DATABASE_URL                = "${aws_secretsmanager_secret.app.arn}:DATABASE_URL::"
+          SECRET_KEY                  = "${aws_secretsmanager_secret.app.arn}:SECRET_KEY::"
+          ALGORITHM                   = "${aws_secretsmanager_secret.app.arn}:ALGORITHM::"
+          CLOUDINARY_CLOUD_NAME       = "${aws_secretsmanager_secret.app.arn}:CLOUDINARY_CLOUD_NAME::"
+          CLOUDINARY_API_KEY          = "${aws_secretsmanager_secret.app.arn}:CLOUDINARY_API_KEY::"
+          CLOUDINARY_API_SECRET       = "${aws_secretsmanager_secret.app.arn}:CLOUDINARY_API_SECRET::"
+          RAZORPAY_KEY_ID             = "${aws_secretsmanager_secret.app.arn}:RAZORPAY_KEY_ID::"
+          RAZORPAY_KEY_SECRET         = "${aws_secretsmanager_secret.app.arn}:RAZORPAY_KEY_SECRET::"
+          RAZORPAY_WEBHOOK_SECRET     = "${aws_secretsmanager_secret.app.arn}:RAZORPAY_WEBHOOK_SECRET::"
+          RESEND_API_KEY              = "${aws_secretsmanager_secret.app.arn}:RESEND_API_KEY::"
+          RESEND_FROM_EMAIL           = "${aws_secretsmanager_secret.app.arn}:RESEND_FROM_EMAIL::"
+          FRONTEND_URL                = "${aws_secretsmanager_secret.app.arn}:FRONTEND_URL::"
+          ALLOWED_ORIGINS             = "${aws_secretsmanager_secret.app.arn}:ALLOWED_ORIGINS::"
+          INITIAL_ADMIN_EMAIL         = "${aws_secretsmanager_secret.app.arn}:INITIAL_ADMIN_EMAIL::"
           INITIAL_ADMIN_PASSWORD_HASH = "${aws_secretsmanager_secret.app.arn}:INITIAL_ADMIN_PASSWORD_HASH::"
-          POSTGRES_SERVER         = "${aws_secretsmanager_secret.app.arn}:POSTGRES_SERVER::"
-          POSTGRES_PORT           = "${aws_secretsmanager_secret.app.arn}:POSTGRES_PORT::"
-          POSTGRES_USER           = "${aws_secretsmanager_secret.app.arn}:POSTGRES_USER::"
-          POSTGRES_PASSWORD       = "${aws_secretsmanager_secret.app.arn}:POSTGRES_PASSWORD::"
-          POSTGRES_DB             = "${aws_secretsmanager_secret.app.arn}:POSTGRES_DB::"
+          POSTGRES_SERVER             = "${aws_secretsmanager_secret.app.arn}:POSTGRES_SERVER::"
+          POSTGRES_PORT               = "${aws_secretsmanager_secret.app.arn}:POSTGRES_PORT::"
+          POSTGRES_USER               = "${aws_secretsmanager_secret.app.arn}:POSTGRES_USER::"
+          POSTGRES_PASSWORD           = "${aws_secretsmanager_secret.app.arn}:POSTGRES_PASSWORD::"
+          POSTGRES_DB                 = "${aws_secretsmanager_secret.app.arn}:POSTGRES_DB::"
         }
       }
     }
 
-    auto_deployments_enabled = false   # CI/CD handles deploys; no auto on ECR push
+    auto_deployments_enabled = false # CI/CD handles deploys; no auto on ECR push
   }
 
   instance_configuration {
@@ -363,8 +410,9 @@ resource "aws_apprunner_service" "backend" {
 
   network_configuration {
     egress_configuration {
-      egress_type       = "VPC"
-      vpc_connector_arn = aws_apprunner_vpc_connector.main.arn
+      # DEFAULT = App Runner's own internet access (emails, Cloudinary, refunds) with no NAT.
+      # The VPC connector is kept (free) for rollback.
+      egress_type = "DEFAULT"
     }
     ingress_configuration {
       is_publicly_accessible = true
@@ -389,9 +437,9 @@ resource "aws_apprunner_service" "backend" {
 
 resource "aws_apprunner_auto_scaling_configuration_version" "main" {
   auto_scaling_configuration_name = "${var.project_name}-autoscaling"
-  min_size                         = var.app_runner_min_instances
-  max_size                         = var.app_runner_max_instances
-  max_concurrency                  = 100
+  min_size                        = var.app_runner_min_instances
+  max_size                        = var.app_runner_max_instances
+  max_concurrency                 = 100
 
   tags = { Name = "${var.project_name}-autoscaling" }
 }

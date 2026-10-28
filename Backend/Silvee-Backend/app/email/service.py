@@ -6,6 +6,7 @@ so a broken email path cannot crash an order or auth flow.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import List
 
 import resend
@@ -59,7 +60,7 @@ def _base_template(title: str, preview: str, body_html: str) -> str:
         <tr>
           <td align="center" style="padding:28px 0 0;color:{_MUTED};font-size:12px;line-height:2">
             Questions? Reply to this email or reach us at
-            <a href="mailto:support@littlelootgifts.com" style="color:{_ACCENT};text-decoration:none">support@littlelootgifts.com</a><br>
+            <a href="mailto:{settings.support_email}" style="color:{_ACCENT};text-decoration:none">{settings.support_email}</a><br>
             &#169; Little Loot &mdash; Gifts that spark joy &bull;
             <a href="{settings.frontend_url}" style="color:{_MUTED};text-decoration:none">littlelootgifts.com</a>
           </td>
@@ -170,14 +171,22 @@ def _address_block(address: str) -> str:
 # ── Core dispatch (never raises) ─────────────────────────────────────────────
 
 def _dispatch(subject: str, to: str, html: str) -> None:
+    """Queue an email on a background thread so a slow/unreachable Resend never
+    delays the HTTP response (signup and password reset used to hang ~60s, which
+    also leaked whether an email was registered via response timing)."""
     if not settings.resend_api_key:
         logger.debug("Email skipped — RESEND_API_KEY not set: %s → %s", subject, to)
         return
+    threading.Thread(target=_send, args=(subject, to, html), daemon=True).start()
+
+
+def _send(subject: str, to: str, html: str) -> None:
     try:
         resend.api_key = settings.resend_api_key
         resend.Emails.send({
-            "from":    f"Little Loot <{settings.resend_from_email}>",
-            "to":      [to],
+            "from":     f"Little Loot <{settings.resend_from_email}>",
+            "reply_to": settings.support_email,
+            "to":       [to],
             "subject": subject,
             "html":    html,
         })
@@ -363,7 +372,7 @@ def send_welcome_email(*, user_email: str, user_name: str) -> None:
         f'<p style="margin:0 0 12px;font-size:13px;font-weight:800;color:{_PRIMARY}">What you get with Little Loot:</p>'
         f'<table width="100%" cellpadding="0" cellspacing="0">'
         f'<tr><td style="padding:6px 0;font-size:13px;color:{_BODY}">&#10003;&nbsp;&nbsp;Free shipping on orders above &#8377;499</td></tr>'
-        f'<tr><td style="padding:6px 0;font-size:13px;color:{_BODY}">&#10003;&nbsp;&nbsp;Easy 7-day returns</td></tr>'
+        f'<tr><td style="padding:6px 0;font-size:13px;color:{_BODY}">&#10003;&nbsp;&nbsp;Free replacement if an item arrives damaged</td></tr>'
         f'<tr><td style="padding:6px 0;font-size:13px;color:{_BODY}">&#10003;&nbsp;&nbsp;Wishlist, order tracking &amp; gift messages</td></tr>'
         f'<tr><td style="padding:6px 0;font-size:13px;color:{_BODY}">&#10003;&nbsp;&nbsp;Exclusive deals on new arrivals</td></tr>'
         f'</table></div>'

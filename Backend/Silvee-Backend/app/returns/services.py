@@ -36,7 +36,6 @@ from app.returns.models import (
 from app.orders.models import Order, OrderItem
 from app.products.models import Product
 from app.users.models import Users
-from app.store_settings.models import StoreSetting
 
 from app.returns.razorpay_refund import create_gateway_refund
 
@@ -94,15 +93,12 @@ def _money(v: Any) -> float:
     return float(v) if v is not None else 0.0
 
 
-def get_return_window_days(session: Session) -> int:
-    """Admin-configurable return window (StoreSetting 'return_window_days', default 7)."""
-    row = session.query(StoreSetting).filter(StoreSetting.key == "return_window_days").first()
-    if row and row.value:
-        try:
-            return int(row.value)
-        except (ValueError, TypeError):
-            pass
-    return 7
+# Store policy: no general returns or refunds. Customers may only report items that
+# arrived damaged, defective, wrong or missing, within 48 hours of delivery, and the
+# remedy they request is a replacement (admins can still refund via the admin flow
+# when a replacement isn't possible).
+CUSTOMER_REPORT_REASONS = {"damaged", "defective", "wrong_item", "missing_item"}
+CUSTOMER_REPORT_WINDOW_HOURS = 48
 
 
 def _record_history(session: Session, rr: ReturnRequest, old: Optional[str],
@@ -364,17 +360,26 @@ def create_return_request(session: Session, user_id: Any, payload) -> dict:
         raise HTTPException(status_code=403, detail="This order does not belong to you")
 
     # ── Eligibility ──────────────────────────────────────────────
+    if payload.reason not in CUSTOMER_REPORT_REASONS:
+        raise HTTPException(
+            status_code=400,
+            detail="We don't accept returns. You can only report damaged, defective, wrong or missing items.",
+        )
+    if payload.request_type != "replacement":
+        raise HTTPException(status_code=400, detail="Reported items are resolved with a replacement")
     if (order.status or "").lower() != "delivered":
-        raise HTTPException(status_code=400, detail="Returns can only be requested for delivered orders")
+        raise HTTPException(status_code=400, detail="Problems can only be reported for delivered orders")
     delivered_at = _ensure_aware(getattr(order, "delivered_at", None))
     if delivered_at is None:
         raise HTTPException(
             status_code=400,
-            detail="Delivery date is unavailable for this order, so a return window cannot be determined",
+            detail="Delivery date is unavailable for this order, so the report window cannot be determined",
         )
-    window = get_return_window_days(session)
-    if _utcnow() - delivered_at > datetime.timedelta(days=window):
-        raise HTTPException(status_code=400, detail=f"The {window}-day return window for this order has expired")
+    if _utcnow() - delivered_at > datetime.timedelta(hours=CUSTOMER_REPORT_WINDOW_HOURS):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Problems must be reported within {CUSTOMER_REPORT_WINDOW_HOURS} hours of delivery",
+        )
 
     order_items_by_id = {str(oi.id): oi for oi in (order.order_items or [])}
 

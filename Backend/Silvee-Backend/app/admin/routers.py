@@ -262,6 +262,10 @@ def _serialize_order(o: Any) -> dict:
         "payment_method": "",   # not faked
         "payment_status": "",   # not faked
         "status":         getattr(o, "status", "pending") or "pending",
+        "gift_message":   getattr(o, "gift_message", None),
+        "gift_to":        getattr(o, "gift_to", None),
+        "gift_from":      getattr(o, "gift_from", None),
+        "hide_prices":    bool(getattr(o, "hide_prices", False)),
         "created_at":     o.created_at.isoformat() if getattr(o, "created_at", None) else "",
         "updated_at":     (getattr(o, "updated_at", None) or o.created_at).isoformat()
                           if getattr(o, "created_at", None) else "",
@@ -868,7 +872,6 @@ SETTINGS_DEFAULTS: Dict[str, Any] = {
     "order_prefix":            "LL",
     "invoice_prefix":          "INV",
     "low_stock_threshold":     10,
-    "return_window_days":      7,    # days after delivery a return may be requested
     # Notifications
     "notify_order_placed":     True,
     "notify_order_shipped":    True,

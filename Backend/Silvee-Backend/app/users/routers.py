@@ -282,6 +282,7 @@ def forgot_password(request: Request, payload: ForgotPasswordRequest, db: Sessio
         resend.api_key = settings.resend_api_key
         resend.Emails.send({
             "from": f"Little Loot <{settings.resend_from_email}>",
+            "reply_to": settings.support_email,
             "to": [user.email],
             "subject": "Reset your Little Loot password",
             "html": f"""

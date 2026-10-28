@@ -138,6 +138,7 @@ async def create_payment_order(
 
     # ── Recompute subtotal from REAL product prices (never trust client) ──
     subtotal = 0.0
+    snapshot_items = []
     for item in body.cart_items:
         product = session.query(Product).filter(Product.id == item.get("product_id")).first()
         if not product:
@@ -157,6 +158,8 @@ async def create_payment_order(
         elif pct > 0: unit = float(math.floor(orig - orig * pct / 100 + 0.5))
         else:         unit = orig
         subtotal += max(0.0, unit) * qty
+        # Store the server price, not the client's, so order lines/invoices are honest
+        snapshot_items.append({**item, "quantity": qty, "price": max(0.0, unit)})
 
     # ── Coupon (server-validated) ──
     discount = 0.0
@@ -184,7 +187,7 @@ async def create_payment_order(
 
     # Snapshot everything verify needs to build the real order
     snapshot = {
-        "items":        body.cart_items,
+        "items":        snapshot_items,
         "coupon_code":  coupon_code_norm,
         "gift_message": (body.gift_message or "").strip()[:150] or None,
         "gift_to":      (body.gift_to      or "").strip()[:24]  or None,
@@ -273,7 +276,7 @@ async def verify_payment(
         order_items_data.append({
             "product_id": it.get("product_id", ""),
             "quantity":   int(it.get("quantity", 1)),
-            "price":      float(it.get("price", 0)),   # display; server total already authoritative
+            "price":      float(it.get("price", 0)),   # server unit price (set in create-order)
             "color":      it.get("color")     or None,
             "color_hex":  it.get("color_hex") or None,
             "image":      it.get("image")     or None,

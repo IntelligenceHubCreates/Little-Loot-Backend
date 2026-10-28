@@ -19,7 +19,7 @@ import uuid
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from app.orders.services import (
-    create_order, get_user_orders, get_order, update_order,
+    create_order, get_user_orders, get_order,
     get_order_items, get_all_orders_admin, update_order_status_admin,
 )
 from app.email.service import (
@@ -414,7 +414,13 @@ async def create_new_order(
     user = Depends(JWTBearer())
 ):
     """Create a new order — total is computed server-side from real product
-    discounts + coupon + delivery. Client-sent totals are ignored."""
+    discounts + coupon + delivery. Client-sent totals are ignored.
+
+    SECURITY: admin-only. Customer orders are created exclusively by
+    /api/payments/verify after a signature-checked Razorpay payment; letting
+    customers hit this directly would create 'confirmed' orders with no payment."""
+    if user is None or user.get('role') != 1:
+        raise HTTPException(status_code=403, detail="Forbidden")
     try:
         subtotal       = 0.0
         enriched_items = []
@@ -542,81 +548,20 @@ async def get_order_by_id(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve order")
 
 
-@router.put("/orders/{order_id}", response_model=OrderResponse)
-async def update_order_status(
-    order_id: str,
-    status: str,
-    db: Session = Depends(get_db),
-    user = Depends(JWTBearer())
-):
-    """Update order status"""
-    try:
-        user_id = user.get('id')
-        order   = update_order(db, user_id, order_id, status)
-        if not order:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-        if isinstance(order.id,      uuid.UUID): order.id      = str(order.id)
-        if isinstance(order.user_id, uuid.UUID): order.user_id = str(order.user_id)
-        return order
-    except HTTPException:
-        raise
-    except Exception:
-        logger.error("update_order_status failed", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update order")
+# Customer-facing PUT /orders/{order_id} removed: it let a customer set any
+# status on their own order (and crashed anyway). Status changes go through the
+# admin endpoints. Customers cannot cancel orders (store policy).
 
 
 @router.patch("/orders/{order_id}/cancel")
-async def cancel_user_order(
-    order_id: str,
-    db: Session = Depends(get_db),
-    user = Depends(JWTBearer()),
-):
-    """Cancel an order — user-facing. Only cancellable while still pending / processing / confirmed."""
-    user_id = user.get("id")
-    try:
-        db_order = db.query(Order).filter(
-            Order.id      == order_id,
-            Order.user_id == user_id,
-        ).first()
-
-        if not db_order:
-            raise HTTPException(status_code=404, detail="Order not found")
-
-        if db_order.status.lower() not in ("pending", "processing", "confirmed"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Order cannot be cancelled (current status: {db_order.status})",
-            )
-
-        db_order.status     = "cancelled"
-        db_order.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(db_order)
-
-        # ── Cancellation email (fire-and-forget) ─────────────────────────────
-        try:
-            customer = db.query(Users).filter(Users.id == db_order.user_id).first()
-            if customer:
-                send_order_cancelled(
-                    user_email=customer.email,
-                    user_name=customer.name or "",
-                    order_id=str(db_order.id),
-                    total=float(getattr(db_order, "total_amount", 0) or 0),
-                    cancelled_by="you",
-                )
-        except Exception:
-            logger.warning("Cancellation email failed for order %s", db_order.id, exc_info=True)
-
-        if isinstance(db_order.id,      uuid.UUID): db_order.id      = str(db_order.id)
-        if isinstance(db_order.user_id, uuid.UUID): db_order.user_id = str(db_order.user_id)
-        return {"id": str(db_order.id), "status": db_order.status}
-
-    except HTTPException:
-        raise
-    except Exception:
-        db.rollback()
-        logger.error("cancel_user_order failed", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to cancel order")
+async def cancel_user_order(order_id: str, user = Depends(JWTBearer())):
+    """Store policy: customers can't cancel once an order is paid. Kept as an
+    explicit 403 so older clients get a clear message instead of a 404.
+    Admins can still cancel (and refund) through the admin order endpoints."""
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Orders can't be cancelled once payment is made. Please contact support if you need help.",
+    )
 
 
 @router.get("/orders/{order_id}/items", response_model=List[OrderItemResponse])

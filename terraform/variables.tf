@@ -67,13 +67,13 @@ variable "db_max_allocated_storage" {
 variable "app_runner_cpu" {
   description = "vCPU units for App Runner instances (1024 = 1 vCPU)."
   type        = string
-  default     = "1024"
+  default     = "512"
 }
 
 variable "app_runner_memory" {
   description = "Memory for App Runner instances in MB."
   type        = string
-  default     = "2048"
+  default     = "1024"
 }
 
 variable "app_runner_min_instances" {
