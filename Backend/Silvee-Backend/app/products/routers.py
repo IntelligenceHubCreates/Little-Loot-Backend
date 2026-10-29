@@ -32,6 +32,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 
 from app.db import get_db
 from app.products.customization import normalize_config as normalize_customization
+from app.products.sku import next_sku
 from app.products.models import (
     Category, CategoryBase, CategoryWithChildren,
     Product, ProductBase, ProductListResponse,
@@ -623,6 +624,7 @@ async def get_product_list(
         term = f"%{search.strip()}%"
         q = q.filter(or_(
             Product.name.ilike(term),
+            Product.sku.ilike(term),
             Product.category.ilike(term),
             Product.sub_category_name.ilike(term),
             Product.brand.ilike(term),
@@ -896,6 +898,7 @@ async def add_new_product(
         pairs_with  = json.loads(productPairsWith)  if productPairsWith  else [],
         customization   = customization_cfg,
         is_customizable = customization_cfg is not None,
+        sku             = next_sku(session, productCategory),
     )
     _sync_product_subcategory(new_product, session)
     session.add(new_product)

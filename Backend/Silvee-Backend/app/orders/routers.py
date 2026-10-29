@@ -241,6 +241,7 @@ def _serialize_admin_order(o, payment_map: dict) -> dict:
         items.append({
             "product_id": str(getattr(it, "product_id", "") or ""),
             "name":       (getattr(prod, "name", None) if prod else None) or "—",
+            "sku":        getattr(prod, "sku", None) if prod else None,
             "qty":        int(getattr(it, "quantity", 1) or 1),
             "price":      float(getattr(it, "price", 0) or 0),
             "color":      getattr(it, "color", None),

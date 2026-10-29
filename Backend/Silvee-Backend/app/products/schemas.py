@@ -50,6 +50,7 @@ class ProductUpdate(BaseModel):
 class ProductResponse(BaseModel):
     id:                   str
     name:                 str
+    sku:                  Optional[str] = None
     category_id:          Optional[str]
     category:             Optional[str]
     sub_category_slug:    Optional[str]

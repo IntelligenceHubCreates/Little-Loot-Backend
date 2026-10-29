@@ -243,6 +243,7 @@ def _serialize_order(o: Any) -> dict:
         serialized_items.append({
             "product_id": str(getattr(i, "product_id", "") or ""),
             "name":       (getattr(prod, "name", None) if prod else None) or "Item",
+            "sku":        getattr(prod, "sku", None) if prod else None,
             "qty":        int(getattr(i, "quantity", 1) or 1),
             "price":      float(getattr(i, "price", 0) or 0),
             "customization": getattr(i, "customization", None),

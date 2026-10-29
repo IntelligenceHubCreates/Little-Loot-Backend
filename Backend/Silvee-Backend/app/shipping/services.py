@@ -332,7 +332,7 @@ def serialize_shipment_full(db: Session, sh: Shipment, include_order: bool = Tru
             if isinstance(pi, list) and pi:
                 f = pi[0]
                 img = f.get("url") if isinstance(f, dict) else (f if isinstance(f, str) else None)
-            products[p.id] = {"name": p.name, "image": img, "current_stock": int(getattr(p, "count", 0) or 0)}
+            products[p.id] = {"name": p.name, "sku": getattr(p, "sku", None), "image": img, "current_stock": int(getattr(p, "count", 0) or 0)}
 
     # Personalisation per order line, so the packer sees what to engrave/check
     oi_ids = [it.order_item_id for it in sh.items if it.order_item_id]
@@ -346,6 +346,7 @@ def serialize_shipment_full(db: Session, sh: Shipment, include_order: bool = Tru
         d = serialize_item(it)
         pinfo = products.get(it.product_id, {})
         d["product_name"]  = pinfo.get("name", "")
+        d["product_sku"]   = pinfo.get("sku")
         d["product_image"] = pinfo.get("image")
         d["current_stock"] = pinfo.get("current_stock", 0)
         d["customization"] = customs.get(it.order_item_id)

@@ -64,6 +64,7 @@ class Product(Base):
 
     id                    = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name                  = Column(String(255), nullable=False)
+    sku                   = Column(String(20), nullable=True, unique=True)   # LL-STA-0042 (app/products/sku.py)
     category_id           = Column(UUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
     category              = Column(String(120))          # legacy plain-text
     # FIX: new columns - denormalised for fast display + filtering
@@ -138,6 +139,7 @@ CategoryWithChildren.model_rebuild()
 class ProductBase(BaseModel):
     id:                   str
     name:                 str
+    sku:                  Optional[str] = None
     category_id:          Optional[str]
     category:             Optional[str]
     # FIX: expose sub-category slug + name so frontend can filter/display correctly
