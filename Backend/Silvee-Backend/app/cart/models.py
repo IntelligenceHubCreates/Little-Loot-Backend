@@ -1,6 +1,6 @@
 # app/cart/models.py
 from datetime import datetime
-from sqlalchemy import Column, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, Column, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 import uuid
@@ -35,6 +35,8 @@ class CartItem(Base):
     color      = Column(String(50), nullable=True)   # e.g. "Pink"
     color_hex  = Column(String(7),  nullable=True)   # e.g. "#F4A7B9"
     image      = Column(Text,       nullable=True)   # color-specific image URL
+    # Personalisation chosen by the shopper (Step 20), validated against the product
+    customization = Column(JSON, nullable=True)
 
     cart    = relationship("Cart",    back_populates="cart_items")
     product = relationship("Product", back_populates="cart_items")

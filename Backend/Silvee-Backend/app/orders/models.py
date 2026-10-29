@@ -1,7 +1,7 @@
 # app/orders/models.py
 from datetime import datetime
 from app.models import Base
-from sqlalchemy import Column, ForeignKey, Integer, String, DECIMAL, DateTime, Text, func, Boolean
+from sqlalchemy import JSON, Column, ForeignKey, Integer, String, DECIMAL, DateTime, Text, func, Boolean
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 from sqlalchemy.orm import relationship
 import uuid
@@ -50,6 +50,8 @@ class OrderItem(Base):
     color      = Column(String(50), nullable=True)   # e.g. "Pink"
     color_hex  = Column(String(7),  nullable=True)   # e.g. "#F4A7B9"
     image      = Column(Text,       nullable=True)   # color-specific image URL
+    # Personalisation as ordered: {"type","text","font","price","method","placement"}
+    customization = Column(JSON, nullable=True)
 
     order   = relationship("Order",   back_populates="order_items")
     product = relationship("Product", back_populates="order_items")

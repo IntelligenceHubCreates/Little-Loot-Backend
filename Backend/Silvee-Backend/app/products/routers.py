@@ -31,6 +31,7 @@ from pydantic import BaseModel as PydanticBase
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 
 from app.db import get_db
+from app.products.customization import normalize_config as normalize_customization
 from app.products.models import (
     Category, CategoryBase, CategoryWithChildren,
     Product, ProductBase, ProductListResponse,
@@ -132,6 +133,17 @@ def _resolve_category(name: Optional[str], slug: Optional[str], session: Session
     return None
 
 
+def _parse_customization(raw: Optional[str]) -> Optional[dict]:
+    """Admin personalisation settings (JSON form field) → normalized dict or None."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid personalisation settings")
+    return normalize_customization(data)
+
+
 def _sync_product_subcategory(product: Product, session: Session) -> None:
     """Keep sub_category_slug + sub_category_name in sync when category_id changes."""
     if product.category_id:
@@ -175,6 +187,7 @@ async def get_products_by_category_slug(
     sub_slug: Optional[str] = Query(None, description="Sub-category slug e.g. 'puzzles'"),
     in_stock: Optional[bool] = Query(None),
     on_sale:  Optional[bool] = Query(None),
+    customizable: Optional[bool] = Query(None),
     session:  Session       = Depends(get_db),
 ):
     effective_slug = sub_slug if sub_slug else slug
@@ -192,6 +205,8 @@ async def get_products_by_category_slug(
         q = q.filter(Product.count > 0)
     if on_sale:
         q = q.filter(Product.amount_discount > 0)
+    if customizable:
+        q = q.filter(Product.is_customizable.is_(True))
 
     total = q.count()
     def _apply_sort(q, sort_by: str):
@@ -561,6 +576,7 @@ async def get_product_list(
     on_sale:        Optional[bool] = Query(None),
     is_new:         Optional[bool] = Query(None),
     is_featured:    Optional[bool] = Query(None),
+    customizable:   Optional[bool] = Query(None, description="Only products that can be personalised"),
     is_active:      Optional[bool] = Query(None, description="None=active only (storefront); pass explicitly for admin"),
     include_inactive: bool        = Query(False, description="Admin: include inactive products"),
     stock_status:   Optional[str] = Query(None, regex="^(in_stock|low_stock|out_of_stock)$"),
@@ -620,6 +636,8 @@ async def get_product_list(
         q = q.filter(Product.is_new.is_(True))
     if is_featured:
         q = q.filter(Product.is_featured.is_(True))
+    if customizable:
+        q = q.filter(Product.is_customizable.is_(True))
 
     if recipient:
         q = q.filter(Product.recipients.any(recipient))
@@ -835,12 +853,14 @@ async def add_new_product(
     productRecipients:    Optional[str] = Form(None),  # JSON: ["little","her"]
     productOccasions:     Optional[str] = Form(None),  # JSON: ["birthday","return"]
     productPairsWith:     Optional[str] = Form(None),  # JSON: ["uuid1","uuid2"]
+    productCustomization: Optional[str] = Form(None),  # JSON: personalisation settings
     user=Depends(JWTBearer()),
     session: Session = Depends(get_db),
 ):
     _require_admin(user)
     if productPrice <= 0:
         raise HTTPException(status_code=400, detail="Price must be greater than 0")
+    customization_cfg = _parse_customization(productCustomization)
 
     form_data = await request.form()
     productDetails   = [str(v) for v in form_data.getlist('productDetails')   if v and str(v).strip()]
@@ -874,6 +894,8 @@ async def add_new_product(
         recipients  = json.loads(productRecipients) if productRecipients else [],
         occasions   = json.loads(productOccasions)  if productOccasions  else [],
         pairs_with  = json.loads(productPairsWith)  if productPairsWith  else [],
+        customization   = customization_cfg,
+        is_customizable = customization_cfg is not None,
     )
     _sync_product_subcategory(new_product, session)
     session.add(new_product)
@@ -995,6 +1017,7 @@ async def update_product(
     productRecipients:     Optional[str] = Form(None),  # JSON: ["little","her"]
     productOccasions:      Optional[str] = Form(None),  # JSON: ["birthday","return"]
     productPairsWith:      Optional[str] = Form(None),  # JSON: ["uuid1","uuid2"]
+    productCustomization:  Optional[str] = Form(None),  # JSON: personalisation settings
     user=Depends(JWTBearer()),
     session: Session = Depends(get_db),
 ):
@@ -1049,6 +1072,10 @@ async def update_product(
         product.occasions = json.loads(productOccasions)
     if productPairsWith is not None:
         product.pairs_with = json.loads(productPairsWith)
+    if productCustomization is not None:
+        cfg = _parse_customization(productCustomization)
+        product.customization   = cfg
+        product.is_customizable = cfg is not None
 
     _sync_product_subcategory(product, session)
 

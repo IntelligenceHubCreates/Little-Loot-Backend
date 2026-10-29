@@ -27,6 +27,7 @@ class OrderItemBase(BaseModel):
     color:      Optional[str]   = None
     color_hex:  Optional[str]   = None
     image:      Optional[str]   = None
+    customization: Optional[dict] = None
 
 
 class OrderBase(BaseModel):

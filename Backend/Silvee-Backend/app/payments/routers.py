@@ -26,6 +26,9 @@ from app.users.models import Users
 from app.orders.models import Order, OrderItem
 from app.orders.services import create_order as svc_create_order
 from app.products.models import Product
+from app.products.customization import (
+    validate_choice as validate_customization, surcharge as customization_surcharge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,9 +160,12 @@ async def create_payment_order(
         if amt > 0:   unit = orig - amt
         elif pct > 0: unit = float(math.floor(orig - orig * pct / 100 + 0.5))
         else:         unit = orig
-        subtotal += max(0.0, unit) * qty
+        # Personalisation: re-validated against the product; surcharge from the product
+        custom = validate_customization(product, item.get("customization"))
+        unit = max(0.0, unit) + customization_surcharge(custom)
+        subtotal += unit * qty
         # Store the server price, not the client's, so order lines/invoices are honest
-        snapshot_items.append({**item, "quantity": qty, "price": max(0.0, unit)})
+        snapshot_items.append({**item, "quantity": qty, "price": unit, "customization": custom})
 
     # ── Coupon (server-validated) ──
     discount = 0.0
@@ -280,6 +286,7 @@ async def verify_payment(
             "color":      it.get("color")     or None,
             "color_hex":  it.get("color_hex") or None,
             "image":      it.get("image")     or None,
+            "customization": it.get("customization") or None,
         })
 
     shipping_str = (f"{addr.get('fullName','')}, {addr.get('addressLine1','')}, "
@@ -322,6 +329,7 @@ async def verify_payment(
                     "name":     (oi.product.name if oi.product else None) or "Product",
                     "quantity": int(oi.quantity or 1),
                     "price":    float(oi.price or 0),
+                    "customization": getattr(oi, "customization", None),
                 }
                 for oi in db_order.order_items
             ]
@@ -548,6 +556,7 @@ def _format_order(order: Order) -> dict:
             "quantity":   int(getattr(oi, 'quantity', 1)),
             "color":      getattr(oi, 'color',     None),
             "color_hex":  getattr(oi, 'color_hex', None),
+            "customization": getattr(oi, 'customization', None),
         })
 
     addr = getattr(order, 'shipping_address', '') or ''

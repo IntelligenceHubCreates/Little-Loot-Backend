@@ -80,6 +80,7 @@ def create_order(db: Session, user_id: str, order: dict) -> Order:
                 color      = item.get('color')     or None,
                 color_hex  = item.get('color_hex') or None,
                 image      = item.get('image')     or None,
+                customization = item.get('customization') or None,
             )
             db.add(db_item)
 

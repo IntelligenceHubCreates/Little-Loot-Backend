@@ -3,6 +3,9 @@ from sqlalchemy.orm import Session
 from app.cart.models import Cart, CartItem
 from app.cart.schemas import CartItemCreate, CartItemUpdate
 from app.products.models import Product
+from app.products.customization import (
+    validate_choice as validate_customization, line_key as customization_line_key,
+)
 from typing import Optional
 from fastapi import HTTPException, status
 from sqlalchemy import desc
@@ -60,26 +63,20 @@ def add_to_cart(db: Session, user_id: str, item: CartItemCreate) -> CartItem:
             detail=f"Only {product.count} items available in stock",
         )
 
-    if item.color:
-        existing_item = (
-            db.query(CartItem)
-            .filter(
-                CartItem.cart_id    == cart.id,
-                CartItem.product_id == item.product_id,
-                CartItem.color      == item.color,
-            )
-            .first()
+    # Personalisation is part of the line identity: "Aarav" and "Diya" are two lines
+    custom = validate_customization(product, item.customization)
+    key = customization_line_key(custom)
+
+    candidates = (
+        db.query(CartItem)
+        .filter(
+            CartItem.cart_id    == cart.id,
+            CartItem.product_id == item.product_id,
+            (CartItem.color == item.color) if item.color else CartItem.color.is_(None),
         )
-    else:
-        existing_item = (
-            db.query(CartItem)
-            .filter(
-                CartItem.cart_id    == cart.id,
-                CartItem.product_id == item.product_id,
-                CartItem.color.is_(None),
-            )
-            .first()
-        )
+        .all()
+    )
+    existing_item = next((c for c in candidates if customization_line_key(c.customization) == key), None)
 
     if existing_item:
         if product.count < (existing_item.quantity + item.quantity):
@@ -99,6 +96,7 @@ def add_to_cart(db: Session, user_id: str, item: CartItemCreate) -> CartItem:
         color      = item.color     or None,
         color_hex  = item.color_hex or None,
         image      = item.image     or None,
+        customization = custom,
     )
     db.add(cart_item)
     db.commit()

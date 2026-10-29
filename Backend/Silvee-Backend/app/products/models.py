@@ -92,6 +92,12 @@ class Product(Base):
     recipients            = Column(ARRAY(String), nullable=False, default=list)  # e.g. ['little','her']
     occasions             = Column(ARRAY(String), nullable=False, default=list)  # e.g. ['birthday','return']
     pairs_with            = Column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
+    # Personalisation (Step 20) — settings JSON + flag for the "Personalised" filter
+    customization         = Column(JSON, nullable=True)
+    is_customizable       = Column(Boolean, nullable=False, default=False, index=True)
+    # Personalisation (Step 20) — settings JSON + flag for the "Personalised" filter
+    customization         = Column(JSON, nullable=True)
+    is_customizable       = Column(Boolean, nullable=False, default=False, index=True)
 
     # ─── Relationships ─────────────────────────────────────────────
     category_ref = relationship("Category", back_populates="products")
@@ -161,6 +167,8 @@ class ProductBase(BaseModel):
     recipients:           List[str]    = []
     occasions:            List[str]    = []
     pairs_with:           List[str]    = []  # UUID strings
+    customization:        Optional[dict] = None
+    is_customizable:      bool         = False
 
     class Config:
         from_attributes = True

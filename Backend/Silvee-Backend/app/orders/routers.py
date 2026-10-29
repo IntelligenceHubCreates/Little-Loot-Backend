@@ -13,6 +13,9 @@ from app.orders.models import Order, OrderItem
 from app.orders.schemas import OrderCreate, OrderResponse, OrderItemResponse
 from app.users.models import Users
 from app.products.models import Product
+from app.products.customization import (
+    validate_choice as validate_customization, surcharge as customization_surcharge,
+)
 from app.users.utils import get_current_user, JWTBearer
 from typing import List, Optional
 import uuid
@@ -242,6 +245,7 @@ def _serialize_admin_order(o, payment_map: dict) -> dict:
             "price":      float(getattr(it, "price", 0) or 0),
             "color":      getattr(it, "color", None),
             "color_hex":  getattr(it, "color_hex", None),
+            "customization": getattr(it, "customization", None),
         })
 
     u    = getattr(o, "user", None)
@@ -457,11 +461,14 @@ async def create_new_order(
                 unit = orig
             if unit < 0:
                 unit = 0.0
+            custom = validate_customization(product, item.customization)
+            unit += customization_surcharge(custom)
 
             subtotal += unit * item.quantity
 
             item_data          = item.model_dump()
             item_data["price"] = unit          # store the ACTUAL charged unit price
+            item_data["customization"] = custom
             enriched_items.append(item_data)
 
         # ── Coupon: re-validate server-side (never trust a client amount) ──

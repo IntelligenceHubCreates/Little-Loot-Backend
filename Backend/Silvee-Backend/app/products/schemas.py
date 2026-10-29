@@ -74,6 +74,8 @@ class ProductResponse(BaseModel):
     recipients:           List[str]    = []
     occasions:            List[str]    = []
     pairs_with:           List[str]    = []
+    customization:        Optional[dict] = None
+    is_customizable:      bool         = False
 
     class Config:
         from_attributes = True

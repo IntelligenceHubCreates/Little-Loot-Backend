@@ -245,6 +245,7 @@ def _serialize_order(o: Any) -> dict:
             "name":       (getattr(prod, "name", None) if prod else None) or "Item",
             "qty":        int(getattr(i, "quantity", 1) or 1),
             "price":      float(getattr(i, "price", 0) or 0),
+            "customization": getattr(i, "customization", None),
         })
 
     u = getattr(o, "user", None)

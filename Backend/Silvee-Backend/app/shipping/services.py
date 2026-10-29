@@ -334,6 +334,13 @@ def serialize_shipment_full(db: Session, sh: Shipment, include_order: bool = Tru
                 img = f.get("url") if isinstance(f, dict) else (f if isinstance(f, str) else None)
             products[p.id] = {"name": p.name, "image": img, "current_stock": int(getattr(p, "count", 0) or 0)}
 
+    # Personalisation per order line, so the packer sees what to engrave/check
+    oi_ids = [it.order_item_id for it in sh.items if it.order_item_id]
+    customs: Dict[Any, Any] = {}
+    if oi_ids:
+        for oi in db.query(OrderItem.id, OrderItem.customization).filter(OrderItem.id.in_(oi_ids)).all():
+            customs[oi.id] = oi.customization
+
     items_out = []
     for it in sh.items:
         d = serialize_item(it)
@@ -341,6 +348,7 @@ def serialize_shipment_full(db: Session, sh: Shipment, include_order: bool = Tru
         d["product_name"]  = pinfo.get("name", "")
         d["product_image"] = pinfo.get("image")
         d["current_stock"] = pinfo.get("current_stock", 0)
+        d["customization"] = customs.get(it.order_item_id)
         items_out.append(d)
 
     epoch = datetime.datetime.min.replace(tzinfo=timezone.utc)

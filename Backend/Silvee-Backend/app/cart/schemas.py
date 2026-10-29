@@ -11,6 +11,7 @@ class CartItemBase(BaseModel):
     color:      Optional[str] = None
     color_hex:  Optional[str] = None
     image:      Optional[str] = None
+    customization: Optional[dict] = None   # {"type": "name", "text": "Aarav", "font": "script"}
 
 
 class CartItemCreate(CartItemBase):

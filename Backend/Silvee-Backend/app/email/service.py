@@ -10,7 +10,9 @@ import threading
 from typing import List
 
 import resend
+from html import escape as _html_escape
 from app.settings import settings
+from app.products.customization import describe as describe_customization
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +112,9 @@ def _items_table(items: list) -> str:
         f"<td style='padding:11px 0;color:{_BODY};font-size:14px;line-height:1.4;"
         f"border-bottom:1px solid {_BORDER}'>"
         f"{it.get('name') or 'Product'}"
-        f"<span style='color:{_MUTED};font-size:12px;display:block'>Qty: {it.get('quantity', 1)}</span>"
+        + (f"<span style='color:{_ACCENT};font-size:12px;font-weight:700;display:block'>&#9998; {_html_escape(describe_customization(it.get('customization')))}</span>"
+           if it.get('customization') else "")
+        + f"<span style='color:{_MUTED};font-size:12px;display:block'>Qty: {it.get('quantity', 1)}</span>"
         f"</td>"
         f"<td style='padding:11px 0;color:{_PRIMARY};font-weight:700;font-size:14px;"
         f"text-align:right;vertical-align:top;border-bottom:1px solid {_BORDER}'>"
