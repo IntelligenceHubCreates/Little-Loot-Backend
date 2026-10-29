@@ -66,6 +66,15 @@ class ReturnRequest(Base):
     admin_notes         = Column(Text, nullable=True)
     rejection_reason    = Column(Text, nullable=True)
 
+    # Reverse pickup of the reported item (Step 19) — Shiprocket-booked or manual
+    pickup_mode           = Column(String(20),  nullable=True)   # shiprocket | manual
+    pickup_courier        = Column(String(120), nullable=True)
+    pickup_awb            = Column(String(120), nullable=True, index=True)
+    pickup_tracking_url   = Column(Text,        nullable=True)
+    pickup_date           = Column(TIMESTAMP(timezone=True), nullable=True)
+    pickup_sr_order_id    = Column(String(40),  nullable=True)
+    pickup_sr_shipment_id = Column(String(40),  nullable=True)
+
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

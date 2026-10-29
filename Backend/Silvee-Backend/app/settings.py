@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     resend_from_email: str = "noreply@littleloot.in"
     # Customer-facing inbox: shown in email footers and used as Reply-To
     support_email: str = "little.loot0914@gmail.com"
+
+    # Where reverse pickups (damage reports) are delivered — the store address.
+    # Override with RETURN_WAREHOUSE_* env vars if it changes.
+    return_warehouse_name: str    = "Little Loot"
+    return_warehouse_phone: str   = "9346952257"
+    return_warehouse_line1: str   = "Door No. 77-5-324, Ground Floor, Vanga Vari Street"
+    return_warehouse_line2: str   = "Chowtra"
+    return_warehouse_city: str    = "Guntur"
+    return_warehouse_state: str   = "Andhra Pradesh"
+    return_warehouse_pincode: str = "522003"
     frontend_url: str = "http://localhost:3000"
 
     class Config:

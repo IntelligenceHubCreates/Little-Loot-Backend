@@ -28,6 +28,7 @@ from app.returns.schemas import (
     ReturnCreateRequest, CancelRequest,
     StatusUpdateRequest, ApproveRequest, RejectRequest,
     ReceiveRequest, RefundRequest, ReplacementRequest, AdminNotesRequest,RefundActionIn,
+    PickupRequest,
 )
 import json, hmac, hashlib
 from datetime import datetime, timezone
@@ -263,6 +264,31 @@ async def admin_replacement(
         product_id=payload.product_id, quantity=payload.quantity,
         tracking_number=payload.tracking_number, status=payload.status, note=payload.note,
     )
+
+
+@admin_returns_router.get("/{return_id}/pickup-defaults")
+async def admin_pickup_defaults(
+    return_id: str,
+    user=Depends(JWTBearer()),
+    session: Session = Depends(get_db),
+):
+    """Prefill for the Schedule Pickup form (customer address, package, Shiprocket availability)."""
+    _require_admin(user)
+    return services.pickup_defaults(session, return_id)
+
+
+@admin_returns_router.put("/{return_id}/pickup")
+def admin_schedule_pickup(
+    return_id: str,
+    payload: PickupRequest,
+    user=Depends(JWTBearer()),
+    session: Session = Depends(get_db),
+):
+    """Book the pickup in Shiprocket (mode=shiprocket) or record a manually arranged
+    one (mode=manual); moves the report to pickup_scheduled and notifies the customer.
+    Sync def: the Shiprocket calls block, so FastAPI runs this in its threadpool."""
+    admin_id = _require_admin(user)
+    return services.schedule_pickup(session, admin_id, return_id, payload)
 
 
 @admin_returns_router.put("/{return_id}/notes")

@@ -343,6 +343,12 @@ async def shiprocket_webhook(request: Request, session: Session = Depends(get_db
     if not awb:
         return {"status": "ignored: no awb"}
 
+    # Reverse pickup of a damage report? (Its AWB is on the return, not a Shipment.)
+    from app.returns.services import mark_pickup_collected_by_awb
+    pickup_result = mark_pickup_collected_by_awb(session, str(awb), sr_status)
+    if pickup_result is not None:
+        return {"status": pickup_result}
+
     target = SHIPROCKET_STATUS_MAP.get(sr_status)
     if not target:
         return {"status": f"ignored: unmapped status '{sr_status}'"}

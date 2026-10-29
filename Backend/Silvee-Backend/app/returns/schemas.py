@@ -158,3 +158,41 @@ class ReplacementRequest(BaseModel):
 
 class AdminNotesRequest(BaseModel):
     admin_notes: str = ""
+
+
+# ── Reverse pickup (Step 19) ──────────────────────────────────────
+
+class PickupAddressInput(BaseModel):
+    name: str = ""
+    phone: str = ""
+    email: Optional[str] = None
+    line1: str = ""
+    line2: Optional[str] = None
+    city: str = ""
+    state: str = ""
+    pincode: str = ""
+
+
+class PickupRequest(BaseModel):
+    mode: str = "manual"                      # shiprocket | manual
+    # shiprocket mode
+    address: Optional[PickupAddressInput] = None
+    weight:  float = Field(0.5, gt=0, le=50)  # kg
+    length:  float = Field(20, gt=0, le=200)  # cm
+    breadth: float = Field(15, gt=0, le=200)
+    height:  float = Field(10, gt=0, le=200)
+    # manual mode
+    courier_name: Optional[str] = None
+    awb_number:   Optional[str] = None
+    tracking_url: Optional[str] = None
+    courier_is_shiprocket: bool = False       # build a Shiprocket tracking link from the AWB
+    pickup_date:  Optional[str] = None        # YYYY-MM-DD
+    note: Optional[str] = None
+
+    @field_validator("mode")
+    @classmethod
+    def _v_mode(cls, v: str) -> str:
+        if v not in ("shiprocket", "manual"):
+            raise ValueError("mode must be 'shiprocket' or 'manual'")
+        return v
+

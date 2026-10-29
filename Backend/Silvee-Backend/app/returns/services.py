@@ -38,6 +38,10 @@ from app.products.models import Product
 from app.users.models import Users
 
 from app.returns.razorpay_refund import create_gateway_refund
+from app.notifications.dispatcher import emit_notification
+from app.shipping import shiprocket_adapter
+from app.shipping.models import Shipment
+from app.settings import settings
 
 
 def _map_gateway_status(gw: Optional[str]) -> str:
@@ -231,6 +235,20 @@ def serialize_replacement(s: Optional[ReplacementShipment]) -> Optional[dict]:
     }
 
 
+def serialize_pickup(rr: ReturnRequest) -> Optional[dict]:
+    if not (rr.pickup_mode or rr.pickup_awb or rr.pickup_courier):
+        return None
+    return {
+        "mode":         rr.pickup_mode,
+        "courier":      rr.pickup_courier,
+        "awb":          rr.pickup_awb,
+        "tracking_url": rr.pickup_tracking_url,
+        "date":         rr.pickup_date.isoformat() if rr.pickup_date else None,
+        "shiprocket_order_id":    rr.pickup_sr_order_id,
+        "shiprocket_shipment_id": rr.pickup_sr_shipment_id,
+    }
+
+
 def serialize_return_full(session: Session, rr: ReturnRequest, include_order: bool = False) -> dict:
     """Full detail dict: items (enriched with product name/image/current stock),
     proofs, timeline, refund, replacement, and optionally order + customer."""
@@ -275,6 +293,7 @@ def serialize_return_full(session: Session, rr: ReturnRequest, include_order: bo
         "status_history":      [serialize_history(h) for h in history_sorted],
         "refund":              serialize_refund(rr.refund),
         "replacement":         serialize_replacement(rr.replacement),
+        "pickup":              serialize_pickup(rr),
     }
 
     if include_order:
@@ -531,7 +550,10 @@ def get_return_admin(session: Session, return_id: Any) -> dict:
 def admin_set_status(session: Session, admin_id: Any, return_id: Any,
                      new_status: str, note: Optional[str] = None) -> dict:
     rr = _load_return(session, return_id)
+    old = rr.status
     _transition(session, rr, new_status, actor_id=_as_uuid(admin_id), note=note)
+    if new_status == "pickup_scheduled" and old != new_status:
+        _notify_pickup(session, rr)
     session.commit()
     session.refresh(rr)
     return serialize_return_full(session, rr, include_order=True)
@@ -751,3 +773,251 @@ def dispatch_replacement(session: Session, admin_id: Any, return_id: Any,
     session.commit()
     session.refresh(rr)
     return serialize_return_full(session, rr, include_order=True)
+
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Reverse pickup (Step 19) — collect the reported item from the customer
+# ═══════════════════════════════════════════════════════════════════
+
+PICKUP_ALLOWED_FROM = ("approved", "pickup_scheduled")
+
+
+def _digits(v: Any) -> str:
+    return "".join(ch for ch in str(v or "") if ch.isdigit())
+
+
+def _phone10(v: Any) -> str:
+    d = _digits(v)
+    return d[-10:] if len(d) >= 10 else d
+
+
+def _pickup_context(session: Session, rr: ReturnRequest):
+    order = session.query(Order).filter(Order.id == rr.order_id).first()
+    user = session.query(Users).filter(Users.id == rr.user_id).first()
+    return order, user
+
+
+def pickup_defaults(session: Session, return_id: Any) -> dict:
+    """Prefill for the admin's 'Schedule Pickup' form: the customer's address (from
+    the order's shipment record if one exists, else parsed from the order), package
+    contents, and whether Shiprocket booking is available."""
+    from app.shipping.services import _parse_shipping_address
+
+    rr = _load_return(session, return_id)
+    order, user = _pickup_context(session, rr)
+
+    addr = {"name": "", "phone": "", "line1": "", "city": "", "state": "", "pincode": ""}
+    sh = (session.query(Shipment).filter(Shipment.order_id == rr.order_id)
+          .order_by(Shipment.created_at.desc()).first()) if order else None
+    if sh and (sh.ship_line1 or sh.ship_pincode):
+        addr.update(name=sh.ship_name or "", phone=sh.ship_phone or "", line1=sh.ship_line1 or "",
+                    city=sh.ship_city or "", state=sh.ship_state or "", pincode=sh.ship_pincode or "")
+    elif order:
+        addr.update(_parse_shipping_address(order.shipping_address or ""))
+    if not addr["name"] and user:
+        addr["name"] = user.name or ""
+    if not addr["phone"] and user:
+        addr["phone"] = user.phone or ""
+    addr["phone"] = _phone10(addr["phone"])
+    addr["email"] = (user.email if user else "") or ""
+
+    units = sum(int(ri.quantity) for ri in rr.items)
+    return {
+        "shiprocket_configured": shiprocket_adapter.is_configured(),
+        "address": addr,
+        "package": {"weight": 0.5, "length": 20, "breadth": 15, "height": 10, "units": units},
+        "warehouse": {
+            "name": settings.return_warehouse_name, "phone": settings.return_warehouse_phone,
+            "line1": settings.return_warehouse_line1, "line2": settings.return_warehouse_line2,
+            "city": settings.return_warehouse_city, "state": settings.return_warehouse_state,
+            "pincode": settings.return_warehouse_pincode,
+        },
+        "pickup": serialize_pickup(rr),
+    }
+
+
+def _notify_pickup(session: Session, rr: ReturnRequest) -> None:
+    """In-app notification + email to the customer. Never raises."""
+    from app.email.service import send_return_pickup_scheduled
+    try:
+        _, user = _pickup_context(session, rr)
+        order_short = str(rr.order_id)[:8].upper()
+        bits = []
+        if rr.pickup_courier:
+            bits.append(f"via {rr.pickup_courier}")
+        if rr.pickup_awb:
+            bits.append(f"(AWB {rr.pickup_awb})")
+        when = rr.pickup_date.strftime("%d %b %Y") if rr.pickup_date else ""
+        body = (f"We've booked a pickup for the item you reported on order {order_short}"
+                + (" " + " ".join(bits) if bits else "")
+                + (f", expected on {when}" if when else "")
+                + ". Please keep it packed and ready.")
+        emit_notification(
+            session, event="return_pickup_scheduled", user_id=rr.user_id, order_id=rr.order_id,
+            courier_name=rr.pickup_courier or "", awb_number=rr.pickup_awb or "",
+            tracking_url=rr.pickup_tracking_url or "", link="/account", body_override=body,
+        )
+        if user and user.email:
+            send_return_pickup_scheduled(
+                user_email=user.email, user_name=user.name or "", order_id=str(rr.order_id),
+                courier_name=rr.pickup_courier or "", awb_number=rr.pickup_awb or "",
+                tracking_url=rr.pickup_tracking_url or "", pickup_date=when,
+            )
+    except Exception:
+        pass  # a notification problem must never block the pickup
+
+
+def _parse_pickup_date(v: Any) -> Optional[datetime.datetime]:
+    if not v:
+        return None
+    if isinstance(v, datetime.datetime):
+        return _ensure_aware(v)
+    s = str(v).strip()
+    try:
+        return _ensure_aware(datetime.datetime.fromisoformat(s))   # 2026-10-30 / 2026-10-30 10:00:00
+    except ValueError:
+        pass
+    for fmt in ("%d-%m-%Y", "%d %b %Y", "%d %B %Y"):                  # other shapes couriers send
+        try:
+            return datetime.datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _shiprocket_return_payload(session: Session, rr: ReturnRequest, payload) -> dict:
+    order, _ = _pickup_context(session, rr)
+    a = payload.address
+    w = settings
+    name_parts = (a.name or "Customer").strip().split(" ", 1)
+
+    product_names = {p.id: p.name for p in session.query(Product)
+                     .filter(Product.id.in_({ri.product_id for ri in rr.items})).all()} if rr.items else {}
+    items, sub_total = [], Decimal("0")
+    for ri in rr.items:
+        price = Decimal(str(ri.item_price))
+        sub_total += price * int(ri.quantity)
+        items.append({
+            "name": (product_names.get(ri.product_id) or "Item")[:100],
+            "sku": str(ri.product_id)[:20],
+            "units": int(ri.quantity),
+            "selling_price": float(price),
+            "discount": 0,
+            "qc_enable": False,
+        })
+
+    order_date = (_ensure_aware(order.created_at) if order and order.created_at else _utcnow())
+    return {
+        # Unique per report; the 'R' suffix keeps it apart from the forward order id
+        "order_id": f"{str(rr.order_id)[:8].upper()}-R{str(rr.id)[:4].upper()}",
+        "order_date": order_date.strftime("%Y-%m-%d %H:%M"),
+        "pickup_customer_name": name_parts[0],
+        "pickup_last_name": name_parts[1] if len(name_parts) > 1 else "",
+        "pickup_address": a.line1,
+        "pickup_address_2": a.line2 or "",
+        "pickup_city": a.city,
+        "pickup_state": a.state,
+        "pickup_country": "India",
+        "pickup_pincode": _digits(a.pincode),
+        "pickup_email": a.email or settings.support_email,
+        "pickup_phone": _phone10(a.phone),
+        "pickup_isd_code": "91",
+        "shipping_customer_name": w.return_warehouse_name,
+        "shipping_last_name": "",
+        "shipping_address": w.return_warehouse_line1,
+        "shipping_address_2": w.return_warehouse_line2,
+        "shipping_city": w.return_warehouse_city,
+        "shipping_state": w.return_warehouse_state,
+        "shipping_country": "India",
+        "shipping_pincode": _digits(w.return_warehouse_pincode),
+        "shipping_email": settings.support_email,
+        "shipping_phone": _phone10(w.return_warehouse_phone),
+        "shipping_isd_code": "91",
+        "order_items": items,
+        "payment_method": "PREPAID",
+        "total_discount": 0,
+        "sub_total": float(sub_total),
+        "length": float(payload.length),
+        "breadth": float(payload.breadth),
+        "height": float(payload.height),
+        "weight": float(payload.weight),
+    }
+
+
+def schedule_pickup(session: Session, admin_id: Any, return_id: Any, payload) -> dict:
+    """Book (Shiprocket) or record (manual) the pickup of the reported item, move the
+    report to 'pickup_scheduled' and notify the customer.
+
+    Shiprocket mode is retry-safe: a created return order is saved before the AWB
+    step, so a retry after 'no courier assigned' only re-runs the AWB assignment
+    instead of creating a duplicate return order."""
+    rr = _load_return(session, return_id)
+    if rr.status not in PICKUP_ALLOWED_FROM:
+        raise HTTPException(status_code=409, detail="Approve the report before scheduling a pickup")
+
+    if payload.mode == "manual":
+        rr.pickup_mode = "manual"
+        rr.pickup_courier = (payload.courier_name or "").strip() or None
+        rr.pickup_awb = (payload.awb_number or "").strip() or None
+        rr.pickup_tracking_url = (payload.tracking_url or "").strip() or (
+            shiprocket_adapter.tracking_url_for(rr.pickup_awb) if rr.pickup_awb and payload.courier_is_shiprocket else None)
+        rr.pickup_date = _parse_pickup_date(payload.pickup_date)
+        note = payload.note or "Pickup arranged" + (f" via {rr.pickup_courier}" if rr.pickup_courier else "")
+    else:
+        if rr.pickup_mode == "shiprocket" and rr.pickup_awb:
+            raise HTTPException(status_code=409, detail=f"Pickup already booked in Shiprocket (AWB {rr.pickup_awb})")
+        if payload.address is None:
+            raise HTTPException(status_code=400, detail="Pickup address is required")
+        a = payload.address
+        missing = [k for k, v in (("name", a.name), ("phone", _phone10(a.phone)), ("address", a.line1),
+                                  ("city", a.city), ("state", a.state), ("pincode", _digits(a.pincode))) if not (v or "").strip()]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Pickup address is missing: {', '.join(missing)}")
+        if len(_digits(a.pincode)) != 6:
+            raise HTTPException(status_code=400, detail="Pickup pincode must be 6 digits")
+        if len(_phone10(a.phone)) != 10:
+            raise HTTPException(status_code=400, detail="Customer phone must be a 10-digit mobile number")
+        try:
+            if not rr.pickup_sr_shipment_id:
+                created = shiprocket_adapter.create_return_order(_shiprocket_return_payload(session, rr, payload))
+                rr.pickup_mode = "shiprocket"
+                rr.pickup_sr_order_id = created["order_id"]
+                rr.pickup_sr_shipment_id = created["shipment_id"]
+                session.commit()           # keep the return order even if the AWB step fails
+                session.refresh(rr)
+            awb = shiprocket_adapter.assign_return_awb(rr.pickup_sr_shipment_id)
+        except shiprocket_adapter.ShiprocketError as exc:
+            raise HTTPException(status_code=502, detail=f"Shiprocket: {exc}")
+        rr.pickup_mode = "shiprocket"
+        rr.pickup_awb = awb["awb"]
+        rr.pickup_courier = awb["courier_name"] or None
+        rr.pickup_tracking_url = shiprocket_adapter.tracking_url_for(awb["awb"])
+        rr.pickup_date = _parse_pickup_date(awb.get("pickup_date"))
+        note = payload.note or f"Pickup booked in Shiprocket — AWB {rr.pickup_awb}" + (
+            f" ({rr.pickup_courier})" if rr.pickup_courier else "")
+
+    first_time = rr.status != "pickup_scheduled"
+    if first_time:
+        _transition(session, rr, "pickup_scheduled", actor_id=_as_uuid(admin_id), note=note)
+    else:
+        _record_history(session, rr, rr.status, rr.status, _as_uuid(admin_id), f"Pickup updated: {note}")
+    _notify_pickup(session, rr)
+    session.commit()
+    session.refresh(rr)
+    return serialize_return_full(session, rr, include_order=True)
+
+
+def mark_pickup_collected_by_awb(session: Session, awb: str, courier_status: str) -> Optional[str]:
+    """Shiprocket webhook hook: when the courier collects a reported item, move the
+    report to 'picked_up'. Returns a status string, or None if the AWB isn't a pickup."""
+    rr = session.query(ReturnRequest).filter(ReturnRequest.pickup_awb == awb).first()
+    if not rr:
+        return None
+    if courier_status not in ("PICKED UP", "PICKUP COMPLETE", "IN TRANSIT", "SHIPPED"):
+        return f"ignored: pickup status '{courier_status}'"
+    if rr.status != "pickup_scheduled":
+        return "ok: already past pickup"
+    _transition(session, rr, "picked_up", actor_id=None, note=f"Shiprocket: {courier_status}")
+    session.commit()
+    return "ok: pickup collected"

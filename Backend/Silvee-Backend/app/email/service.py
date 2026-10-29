@@ -387,3 +387,57 @@ def send_welcome_email(*, user_email: str, user_name: str) -> None:
             body,
         ),
     )
+
+
+def send_return_pickup_scheduled(
+    *,
+    user_email: str,
+    user_name: str,
+    order_id: str,
+    courier_name: str = "",
+    awb_number: str = "",
+    tracking_url: str = "",
+    pickup_date: str = "",
+) -> None:
+    """Tell the customer a pickup is booked for the item they reported as damaged/wrong."""
+    import html as _html
+    order_short = str(order_id)[:8].upper()
+    rows = []
+    if courier_name:
+        rows.append(("Courier", courier_name))
+    if awb_number:
+        rows.append(("AWB / Tracking no.", awb_number))
+    if pickup_date:
+        rows.append(("Expected pickup", pickup_date))
+    details = ""
+    if rows:
+        details = (
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="background:#F9F5FF;border-radius:14px;padding:14px 18px;margin:0 0 8px">'
+            + "".join(
+                f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED}">{_html.escape(k)}</td>'
+                f'<td style="padding:6px 0;font-size:13px;font-weight:800;color:{_PRIMARY};text-align:right">{_html.escape(v)}</td></tr>'
+                for k, v in rows
+            )
+            + "</table>"
+        )
+    body = (
+        _heading("&#128666;", "Pickup booked for your item")
+        + _order_pill(order_short)
+        + f'<p style="color:{_BODY};font-size:14px;line-height:1.8;margin:0 0 4px">'
+        f'Hi <strong>{_html.escape(user_name or "there")}</strong>,</p>'
+        f'<p style="color:{_BODY};font-size:14px;line-height:1.8;margin:0 0 16px">'
+        f'We&rsquo;ve arranged a courier to collect the item you reported. Please keep it packed '
+        f'(original packaging if you still have it) and ready to hand over. Once it reaches us, '
+        f'we&rsquo;ll send your replacement.</p>'
+        + details
+        + _cta_button(tracking_url or f"{settings.frontend_url}/account", "Track Pickup &#8594;" if tracking_url else "View My Report &#8594;")
+    )
+    _dispatch(
+        subject=f"Pickup booked for order #{order_short} \U0001f69a — Little Loot",
+        to=user_email,
+        html=_base_template(
+            "Pickup Booked — Little Loot",
+            f"A courier will collect the item you reported on order #{order_short}.",
+            body,
+        ),
+    )

@@ -41,8 +41,8 @@ EVENT_CONFIG = {
     "rto_initiated":     {"type": "shipping", "title": "Return to origin started",
                           "body": "Order {0} is being returned to us. Support will reach out.",
                           "wa_template": None, "channels": ["in_app"]},
-    "return_pickup_scheduled": {"type": "shipping", "title": "Return pickup scheduled",
-                          "body": "A pickup for your return of order {0} has been scheduled.",
+    "return_pickup_scheduled": {"type": "return", "title": "Pickup booked for your reported item 🚚",
+                          "body": "We've booked a pickup for the item you reported on order {0}. Please keep it packed and ready.",
                           "wa_template": "return_pickup_scheduled", "channels": ["in_app", "whatsapp"]},
 }
 
@@ -66,6 +66,7 @@ def emit_notification(
     awb_number: str = "",
     tracking_url: str = "",
     link: Optional[str] = None,
+    body_override: Optional[str] = None,
 ) -> None:
     cfg = EVENT_CONFIG.get(event)
     if not cfg:
@@ -74,7 +75,7 @@ def emit_notification(
     order_short = (str(order_id)[:8].upper() if order_id else "")
     vars_list = [order_short, courier_name, awb_number, tracking_url]
     title = cfg["title"]
-    body  = _fmt(cfg["body"], vars_list)
+    body  = body_override or _fmt(cfg["body"], vars_list)
     deep_link = link or (f"/track-order?order_id={order_id}" if order_id else None)
 
     try:

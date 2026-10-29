@@ -59,6 +59,113 @@ def schedule_pickup(shiprocket_order_id: str) -> dict:
     raise NotConfigured("Shiprocket schedule_pickup not yet activated.")
 
 
+# ═══════════════════════════════════════════════════════════════════
+# LIVE: reverse pickup for damage reports (return order → AWB)
+# ═══════════════════════════════════════════════════════════════════
+# Uses Shiprocket's external API with an API user (Shiprocket → Settings → API →
+# Configure → Create an API User). Kept separate from the forward-shipping stubs
+# above so activating returns doesn't change outgoing-order behaviour.
+
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+_TOKEN_TTL_SECONDS = 8 * 24 * 3600     # Shiprocket tokens last 10 days; refresh early
+_token_cache: dict = {"token": None, "at": 0.0}
+
+
+class ShiprocketError(Exception):
+    """A Shiprocket call failed; the message is safe to show to the admin."""
+
+
+def _error_text(resp) -> str:
+    """Pull a readable message out of a Shiprocket error response."""
+    try:
+        j = resp.json()
+    except Exception:
+        return f"HTTP {resp.status_code}"
+    msg = j.get("message") if isinstance(j, dict) else None
+    errs = j.get("errors") if isinstance(j, dict) else None
+    if isinstance(errs, dict) and errs:
+        parts = []
+        for k, v in errs.items():
+            parts.append(f"{k}: {v[0] if isinstance(v, list) and v else v}")
+        return (msg + " — " if msg else "") + "; ".join(parts)
+    return str(msg or f"HTTP {resp.status_code}")
+
+
+def _token(force: bool = False) -> str:
+    import requests
+    if not is_configured():
+        raise ShiprocketError("Shiprocket is not connected (SHIPROCKET_API_EMAIL / SHIPROCKET_API_PASSWORD not set).")
+    if not force and _token_cache["token"] and time.time() - _token_cache["at"] < _TOKEN_TTL_SECONDS:
+        return _token_cache["token"]
+    try:
+        r = requests.post(f"{SHIPROCKET_BASE}/auth/login",
+                          json={"email": SHIPROCKET_API_EMAIL, "password": SHIPROCKET_API_PASSWORD}, timeout=20)
+    except requests.RequestException as exc:
+        raise ShiprocketError(f"Could not reach Shiprocket: {exc}")
+    if r.status_code != 200 or not (r.json() or {}).get("token"):
+        raise ShiprocketError(f"Shiprocket login failed: {_error_text(r)}")
+    _token_cache.update(token=r.json()["token"], at=time.time())
+    return _token_cache["token"]
+
+
+def _post(path: str, payload: dict) -> dict:
+    """POST with the cached token; re-login once on 401."""
+    import requests
+    for attempt in (0, 1):
+        try:
+            r = requests.post(f"{SHIPROCKET_BASE}{path}", json=payload, timeout=30,
+                              headers={"Authorization": f"Bearer {_token(force=attempt == 1)}"})
+        except requests.RequestException as exc:
+            raise ShiprocketError(f"Could not reach Shiprocket: {exc}")
+        if r.status_code == 401 and attempt == 0:
+            continue
+        if r.status_code >= 400:
+            raise ShiprocketError(_error_text(r))
+        try:
+            return r.json() or {}
+        except Exception:
+            return {}
+    raise ShiprocketError("Shiprocket authentication failed")
+
+
+def tracking_url_for(awb: str) -> str:
+    return f"https://shiprocket.co/tracking/{awb}" if awb else ""
+
+
+def create_return_order(payload: dict) -> dict:
+    """POST /orders/create/return → {'order_id', 'shipment_id'} (as strings)."""
+    data = _post("/orders/create/return", payload)
+    order_id = data.get("order_id")
+    shipment_id = data.get("shipment_id")
+    if not shipment_id:
+        raise ShiprocketError(f"Shiprocket did not create the return order: {data.get('message') or data}")
+    return {"order_id": str(order_id or ""), "shipment_id": str(shipment_id)}
+
+
+def assign_return_awb(shipment_id: str) -> dict:
+    """POST /courier/assign/awb with is_return=1. Shiprocket picks the courier and
+    schedules the pickup from the customer's address. Returns
+    {'awb', 'courier_name', 'pickup_date'(str|None)}."""
+    data = _post("/courier/assign/awb", {"shipment_id": int(shipment_id), "is_return": 1})
+    inner = ((data.get("response") or {}).get("data")) or {}
+    awb = inner.get("awb_code") or data.get("awb_code")
+    if not awb:
+        raise ShiprocketError(
+            "Return order created in Shiprocket, but no courier was assigned yet: "
+            f"{data.get('message') or inner.get('awb_assign_error') or 'no serviceable courier'}. "
+            "You can retry, or assign one in the Shiprocket dashboard and enter the AWB manually."
+        )
+    return {
+        "awb": str(awb),
+        "courier_name": inner.get("courier_name") or "",
+        "pickup_date": inner.get("pickup_scheduled_date"),
+    }
+
+
 def verify_webhook(token_header: Optional[str]) -> bool:
     """Shiprocket sends the configured token in the 'x-api-key' header."""
     if not SHIPROCKET_WEBHOOK_TOKEN:
