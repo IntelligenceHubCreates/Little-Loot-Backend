@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # Email (Resend) — required for forgot-password emails
     resend_api_key: Optional[str] = None
-    resend_from_email: str = "noreply@littleloot.in"
+    resend_from_email: str = "orders@littlelootgifts.com"   # must be on the Resend-verified domain
     # Customer-facing inbox: shown in email footers and used as Reply-To
     support_email: str = "little.loot0914@gmail.com"
 

@@ -22,6 +22,7 @@ from pydantic import BaseModel, EmailStr
 import resend
 
 from app.db import get_db
+from app.settings import settings
 from app.models import Base   # adjust to your Base import path
 
 log = logging.getLogger(__name__)
@@ -30,9 +31,10 @@ newsletter_router = APIRouter(prefix="/api/newsletter", tags=["Newsletter"])
 
 # ── Config ────────────────────────────────────────────────────────
 resend.api_key  = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL      = os.getenv("NEWSLETTER_FROM_EMAIL", "hello@littleloot.in")
+# Sender must be on the Resend-verified domain (littlelootgifts.com)
+FROM_EMAIL      = os.getenv("NEWSLETTER_FROM_EMAIL") or settings.resend_from_email
 FROM_NAME       = "Little Loot"
-STORE_URL       = os.getenv("NEXT_PUBLIC_FRONTEND_URL", "https://littleloot.in")
+STORE_URL       = os.getenv("NEXT_PUBLIC_FRONTEND_URL") or settings.frontend_url
 
 
 # ── Model ─────────────────────────────────────────────────────────
@@ -152,7 +154,7 @@ def _welcome_html(email: str) -> str:
             <td style="background:#f9f9f9;padding:24px 40px;text-align:center;
                        border-top:1px solid #eee;">
               <p style="margin:0 0 8px;font-size:13px;color:#999;">
-                You received this because you subscribed at littleloot.in
+                You received this because you subscribed at littlelootgifts.com
               </p>
               <p style="margin:0;font-size:13px;color:#999;">
                 <a href="{unsubscribe_url}"
