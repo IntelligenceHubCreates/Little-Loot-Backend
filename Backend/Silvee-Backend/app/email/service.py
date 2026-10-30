@@ -174,22 +174,22 @@ def _address_block(address: str) -> str:
 
 # ── Core dispatch (never raises) ─────────────────────────────────────────────
 
-def _dispatch(subject: str, to: str, html: str) -> None:
+def _dispatch(subject: str, to: str, html: str, reply_to: str | None = None) -> None:
     """Queue an email on a background thread so a slow/unreachable Resend never
     delays the HTTP response (signup and password reset used to hang ~60s, which
     also leaked whether an email was registered via response timing)."""
     if not settings.resend_api_key:
         logger.debug("Email skipped — RESEND_API_KEY not set: %s → %s", subject, to)
         return
-    threading.Thread(target=_send, args=(subject, to, html), daemon=True).start()
+    threading.Thread(target=_send, args=(subject, to, html, reply_to), daemon=True).start()
 
 
-def _send(subject: str, to: str, html: str) -> None:
+def _send(subject: str, to: str, html: str, reply_to: str | None = None) -> None:
     try:
         resend.api_key = settings.resend_api_key
         resend.Emails.send({
             "from":     f"Little Loot <{settings.resend_from_email}>",
-            "reply_to": settings.support_email,
+            "reply_to": reply_to or settings.support_email,
             "to":       [to],
             "subject": subject,
             "html":    html,
@@ -445,3 +445,73 @@ def send_return_pickup_scheduled(
             body,
         ),
     )
+
+
+# ── Bulk order enquiries ─────────────────────────────────────────────────────
+
+def _bulk_rows(rows: list) -> str:
+    return (
+        f'<table width="100%" cellpadding="0" cellspacing="0" style="background:#F9F5FF;border-radius:14px;padding:14px 18px;margin:0 0 8px">'
+        + "".join(
+            f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};vertical-align:top;width:40%">{_html_escape(k)}</td>'
+            f'<td style="padding:6px 0;font-size:13px;font-weight:700;color:{_PRIMARY}">{_html_escape(str(v))}</td></tr>'
+            for k, v in rows if v not in (None, "")
+        )
+        + "</table>"
+    )
+
+
+def send_bulk_enquiry_to_store(e: dict) -> None:
+    """New bulk enquiry → store inbox. Reply-to is the customer when they gave an email."""
+    phone = e.get("phone") or ""
+    wa = f"https://wa.me/91{phone}" if phone else ""
+    body = (
+        _heading("&#128230;", "New bulk order enquiry")
+        + f'<p style="color:{_BODY};font-size:14px;line-height:1.8;margin:0 0 16px;text-align:center">'
+        f'<strong>{_html_escape(e.get("reference", ""))}</strong> · reply within 24 hours</p>'
+        + _bulk_rows([
+            ("Product", (e.get("product_name") or "—") + (f" ({e['product_sku']})" if e.get("product_sku") else "")),
+            ("Quantity", f"{e.get('quantity')} units"),
+            ("Needed by", e.get("needed_by")),
+            ("Personalisation", {"yes": "Yes", "no": "No"}.get(e.get("personalise") or "", "")),
+            ("Name", e.get("name")),
+            ("Phone", phone),
+            ("Email", e.get("email")),
+            ("City", e.get("city")),
+            ("Notes", e.get("notes")),
+        ])
+        + (_cta_button(wa, "Reply on WhatsApp &#8594;") if wa else "")
+    )
+    _dispatch(
+        subject=f"Bulk enquiry {e.get('reference', '')}: {e.get('quantity')} × {e.get('product_name') or 'products'}",
+        to=settings.support_email,
+        html=_base_template("New bulk enquiry — Little Loot", f"{e.get('quantity')} units requested by {e.get('name')}", body),
+        reply_to=e.get("email") or None,
+    )
+
+
+def send_bulk_enquiry_confirmation(e: dict) -> None:
+    """Confirmation to the customer that their bulk enquiry was received."""
+    if not e.get("email"):
+        return
+    first = (e.get("name") or "there").split()[0]
+    body = (
+        _heading("&#128230;", "We&rsquo;ve got your bulk order request")
+        + f'<p style="color:{_BODY};font-size:14px;line-height:1.8;margin:0 0 4px">Hi <strong>{_html_escape(first)}</strong>,</p>'
+        f'<p style="color:{_BODY};font-size:14px;line-height:1.8;margin:0 0 16px">'
+        f'Thanks for thinking of Little Loot for your bulk order! Our team will call or WhatsApp you within '
+        f'<strong>24 hours</strong> with the best price and delivery timeline.</p>'
+        + _bulk_rows([
+            ("Reference", e.get("reference")),
+            ("Product", e.get("product_name") or "As described"),
+            ("Quantity", f"{e.get('quantity')} units"),
+            ("Needed by", e.get("needed_by")),
+        ])
+        + _cta_button(f"{settings.frontend_url}/bulk-orders", "Make another request &#8594;")
+    )
+    _dispatch(
+        subject=f"Your bulk order request {e.get('reference', '')} — Little Loot",
+        to=e["email"],
+        html=_base_template("Bulk order request received — Little Loot", "We'll reply within 24 hours with a quote.", body),
+    )
+

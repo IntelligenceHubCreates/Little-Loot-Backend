@@ -35,6 +35,7 @@ from app.shipping.routers import (
     shipping_router, shiprocket_webhook_router,
 )
 from app.feedback.routers import public_feedback_router, admin_feedback_router
+from app.bulk.routers import bulk_router, admin_bulk_router
 from app.models import Base
 
 logging.basicConfig(level=logging.INFO)
@@ -154,6 +155,8 @@ server.include_router(shipping_router)
 server.include_router(shiprocket_webhook_router)
 server.include_router(public_feedback_router)
 server.include_router(admin_feedback_router)
+server.include_router(bulk_router)
+server.include_router(admin_bulk_router)
 
 
 @server.get("/")
