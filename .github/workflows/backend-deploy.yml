@@ -35,6 +35,41 @@ jobs:
       - name: Check for syntax errors
         run: python -m py_compile app/main.py
 
+      # Import the whole app with production dependencies: catches start-up
+      # crashes (e.g. the Oct 30 NameError) BEFORE they reach App Runner.
+      - name: App boots (import + route registration)
+        env:
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: '5432'
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+          CLOUDINARY_CLOUD_NAME: ci
+          CLOUDINARY_API_KEY: ci
+          CLOUDINARY_API_SECRET: ci
+          SECRET_KEY: ci-secret-key-0123456789abcdef0123456789
+          RAZORPAY_KEY_ID: ci
+          RAZORPAY_KEY_SECRET: ci
+          RAZORPAY_WEBHOOK_SECRET: ci
+        run: |
+          python -c "import app.main as m; n=len(m.server.openapi()['paths']); print(f'app imported, {n} routes')"
+
+      # alembic_version.version_num is VARCHAR(32): a longer revision id makes the
+      # migration fail at boot (the Nov 2 outage cause).
+      - name: Alembic revision ids fit VARCHAR(32)
+        run: |
+          python - <<'EOF'
+          import glob, re, sys
+          bad = []
+          for f in glob.glob('alembic/versions/*.py'):
+              m = re.search(r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", open(f, encoding='utf-8').read(), re.M)
+              if m and len(m.group(1)) > 32:
+                  bad.append(f"{m.group(1)} ({len(m.group(1))} chars) in {f}")
+          if bad:
+              print("Revision ids longer than 32 characters:\n  " + "\n  ".join(bad)); sys.exit(1)
+          print("all revision ids <= 32 chars")
+          EOF
+
       - name: Ruff lint (if installed)
         run: |
           pip install ruff --quiet || true
@@ -85,26 +120,31 @@ jobs:
           docker push "${{ steps.meta.outputs.image_latest }}"
 
       - name: Trigger App Runner deployment
+        id: deploy
         run: |
-          aws apprunner start-deployment \
-            --service-arn "${{ env.APP_RUNNER_ARN }}"
+          OP_ID=$(aws apprunner start-deployment \
+            --service-arn "${{ env.APP_RUNNER_ARN }}" \
+            --query 'OperationId' --output text)
+          echo "operation_id=${OP_ID}" >> "$GITHUB_OUTPUT"
+          echo "Started deployment operation ${OP_ID}"
 
+      # Track THIS deployment's operation: the service status reads RUNNING even
+      # after App Runner rolls a failed deployment back, which used to pass here.
       - name: Wait for deployment to complete
         run: |
-          echo "Waiting for App Runner deployment to complete (up to 10 min)..."
-          for i in $(seq 1 60); do
-            STATUS=$(aws apprunner describe-service \
+          OP_ID="${{ steps.deploy.outputs.operation_id }}"
+          echo "Waiting for operation ${OP_ID} (up to 15 min)..."
+          for i in $(seq 1 90); do
+            OP_STATUS=$(aws apprunner list-operations \
               --service-arn "${{ env.APP_RUNNER_ARN }}" \
-              --query 'Service.Status' --output text)
-            echo "  [${i}/60] Status: ${STATUS}"
-            if [ "$STATUS" = "RUNNING" ]; then
-              echo "Deployment complete!"
-              exit 0
-            fi
-            if [ "$STATUS" = "CREATE_FAILED" ] || [ "$STATUS" = "UPDATE_FAILED" ] || [ "$STATUS" = "DELETED" ]; then
-              echo "Deployment FAILED with status: ${STATUS}"
-              exit 1
-            fi
+              --query "OperationSummaryList[?Id=='${OP_ID}'].Status | [0]" --output text)
+            echo "  [${i}/90] Operation status: ${OP_STATUS}"
+            case "$OP_STATUS" in
+              SUCCEEDED) echo "Deployment succeeded!"; exit 0 ;;
+              FAILED|ROLLBACK_SUCCEEDED|ROLLBACK_FAILED|ROLLBACK_IN_PROGRESS)
+                echo "::error::Deployment did not go live (${OP_STATUS}). App Runner kept/rolled back the previous version - check the application logs in CloudWatch."
+                exit 1 ;;
+            esac
             sleep 10
           done
           echo "Timed out waiting for deployment"

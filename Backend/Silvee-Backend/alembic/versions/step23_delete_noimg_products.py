@@ -1,6 +1,6 @@
 """Step 23: permanently delete 85 products without photos (owner's checklist, 02 Nov 2026)
 
-Revision ID: step23_delete_unphotographed_products
+Revision ID: step23_delete_noimg_products
 Revises: step22_bulk_enquiries
 Create Date: 2026-11-02
 
@@ -23,7 +23,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = 'step23_delete_unphotographed_products'
+revision: str = 'step23_delete_noimg_products'   # alembic_version.version_num is VARCHAR(32)
 down_revision: Union[str, None] = 'step22_bulk_enquiries'
 branch_labels = None
 depends_on = None

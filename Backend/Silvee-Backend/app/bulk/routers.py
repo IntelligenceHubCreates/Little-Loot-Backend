@@ -10,7 +10,9 @@ Bulk order enquiries — quote requests for 25+ units of any product.
 On a new enquiry the store gets an email (reply-to = the customer) and the
 customer gets a confirmation if they left an email address.
 """
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here — with slowapi's @limiter.limit
+# wrapper, FastAPI 0.100 can't resolve string annotations (NameError: BulkEnquiryIn)
+# and every worker crashes on boot.
 
 import datetime
 import re
