@@ -790,6 +790,7 @@ async def get_cloudinary_upload_signature(
         "littleloot/products",
         "littleloot/products/colors",
         "littleloot/products/videos",
+        "littleloot/reels",          # Instagram reel cover images
     }
     if folder not in ALLOWED_FOLDERS:
         folder = "littleloot/products"
