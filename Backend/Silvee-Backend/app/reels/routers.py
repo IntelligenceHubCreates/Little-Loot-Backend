@@ -74,6 +74,7 @@ def _serialize(r: InstagramReel, cards: dict, admin: bool = False) -> dict:
         "embed_url": f"https://www.instagram.com/{r.kind}/{r.shortcode}/embed/",
         "caption": r.caption,
         "cover_url": r.cover_url,
+        "video_url": r.video_url,
         "products": [cards[pid] for pid in (r.product_ids or []) if pid in cards],
     }
     if admin:
@@ -114,6 +115,7 @@ class ReelIn(BaseModel):
     url: str = Field(..., max_length=500)
     caption: Optional[str] = Field(None, max_length=200)
     cover_url: Optional[str] = Field(None, max_length=1000)
+    video_url: Optional[str] = Field(None, max_length=1000)
     product_ids: List[str] = Field(default_factory=list, max_length=20)
     show_on_home: bool = True
     is_active: bool = True
@@ -124,6 +126,7 @@ class ReelUpdate(BaseModel):
     url: Optional[str] = Field(None, max_length=500)
     caption: Optional[str] = Field(None, max_length=200)
     cover_url: Optional[str] = Field(None, max_length=1000)
+    video_url: Optional[str] = Field(None, max_length=1000)
     product_ids: Optional[List[str]] = Field(None, max_length=20)
     show_on_home: Optional[bool] = None
     is_active: Optional[bool] = None
@@ -173,6 +176,7 @@ def admin_create_reel(body: ReelIn, session: Session = Depends(get_db), user=Dep
     r = InstagramReel(
         url=f"https://www.instagram.com/{kind}/{code}/", shortcode=code, kind=kind,
         caption=(body.caption or "").strip() or None, cover_url=_cover(body.cover_url),
+        video_url=_cover(body.video_url),
         product_ids=_clean_product_ids(session, body.product_ids),
         show_on_home=body.show_on_home, is_active=body.is_active, sort_order=body.sort_order,
     )
@@ -203,6 +207,8 @@ def admin_update_reel(reel_id: str, body: ReelUpdate, session: Session = Depends
         r.caption = (body.caption or "").strip() or None
     if "cover_url" in fields:
         r.cover_url = _cover(body.cover_url)
+    if "video_url" in fields:
+        r.video_url = _cover(body.video_url)
     if "product_ids" in fields and body.product_ids is not None:
         r.product_ids = _clean_product_ids(session, body.product_ids)
     for f in ("show_on_home", "is_active", "sort_order"):

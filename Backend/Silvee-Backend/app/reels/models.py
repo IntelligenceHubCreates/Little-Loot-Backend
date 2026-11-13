@@ -18,6 +18,7 @@ class InstagramReel(Base):
     kind         = Column(String(10), nullable=False, default="reel")   # reel | p (post) | tv
     caption      = Column(String(200), nullable=True)
     cover_url    = Column(Text, nullable=True)                  # optional cover image (Cloudinary)
+    video_url    = Column(Text, nullable=True)                  # optional uploaded reel video (Cloudinary) — plays natively
     product_ids  = Column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
     show_on_home = Column(Boolean, nullable=False, default=True)
     is_active    = Column(Boolean, nullable=False, default=True)
