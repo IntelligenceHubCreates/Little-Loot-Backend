@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     cloudinary_cloud_name: str
     secret_key: str
     algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
-    access_token_expire_minutes: int = 1440  # 24 hours
+    # Matches the website session (NextAuth maxAge 30 days). Was 24h, which left users
+    # "logged in" on the site with a dead backend token (401 on every action).
+    access_token_expire_minutes: int = 43200  # 30 days
 
     @field_validator("secret_key")
     @classmethod

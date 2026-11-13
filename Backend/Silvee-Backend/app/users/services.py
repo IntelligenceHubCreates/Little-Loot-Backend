@@ -124,7 +124,14 @@ def create_address(db: Session, address: AddressCreate, user) -> UserAddress:
 
         user_id = user['id']
 
-        if address.is_default:
+        data = address.model_dump()
+        has_default = db.query(UserAddress).filter(
+            UserAddress.user_id == user_id, UserAddress.is_default == True,  # noqa: E712
+        ).first() is not None
+        if not has_default:
+            data["is_default"] = True          # a customer's first address is their default
+
+        if data["is_default"]:
             db.query(UserAddress).filter(
                 UserAddress.user_id == user_id,
                 UserAddress.is_default == True,  # noqa: E712
@@ -132,7 +139,7 @@ def create_address(db: Session, address: AddressCreate, user) -> UserAddress:
 
         db_address = UserAddress(
             user_id=user_id,
-            **address.model_dump()
+            **data
         )
         db.add(db_address)
         db.commit()
@@ -154,7 +161,10 @@ def get_user_addresses(db: Session, user) -> List[UserAddress]:
     try:
         if not user or 'id' not in user:
             raise Exception("Invalid token")
-        return db.query(UserAddress).filter(UserAddress.user_id == user['id']).all()
+        return (db.query(UserAddress)
+                .filter(UserAddress.user_id == user['id'])
+                .order_by(UserAddress.is_default.desc(), UserAddress.created_at.asc())
+                .all())
     except Exception as e:
         raise e
 
@@ -194,7 +204,7 @@ def update_address(db: Session, address_id: str, address: AddressCreate, user) -
                 UserAddress.id != address_id
             ).update({"is_default": False})
 
-        for key, value in address.model_dump().items():
+        for key, value in address.model_dump(exclude_unset=True).items():
             setattr(db_address, key, value)
 
         db.commit()
@@ -215,7 +225,17 @@ def delete_address(db: Session, address_id: str, user) -> bool:
         if not db_address:
             return False
 
+        was_default = bool(db_address.is_default)
         db.delete(db_address)
+        db.flush()
+        if was_default:
+            # Keep a default so checkout always pre-selects something: the newest remaining address
+            nxt = (db.query(UserAddress)
+                   .filter(UserAddress.user_id == user['id'])
+                   .order_by(UserAddress.created_at.desc())
+                   .first())
+            if nxt:
+                nxt.is_default = True
         db.commit()
         return True
     except Exception as e:

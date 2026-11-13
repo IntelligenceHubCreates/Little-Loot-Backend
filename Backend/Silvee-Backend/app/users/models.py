@@ -47,6 +47,7 @@ class UserAddress(Base):
     # ──────────────────────────────────────────────────────────────────────────
     address_line1 = Column(String(255), nullable=False)
     address_line2 = Column(String(255))
+    landmark = Column(String(255), nullable=True)   # Step 25
     city = Column(String(100), nullable=False)
     state = Column(String(100), nullable=False)
     postal_code = Column(String(20), nullable=False)

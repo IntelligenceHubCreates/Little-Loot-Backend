@@ -49,6 +49,7 @@ class AddressBase(BaseModel):
     phone:         str
     address_line1: str
     address_line2: Optional[str] = ""
+    landmark:      Optional[str] = ""
     city:          str
     state:         str
     postal_code:   str
@@ -58,7 +59,48 @@ class AddressBase(BaseModel):
 
 
 class AddressCreate(AddressBase):
-    pass
+    """Incoming address: cleaned and validated (responses use AddressBase as-is,
+    so older saved rows never fail to load)."""
+
+    @field_validator("full_name", "address_line1", "city", "state", mode="before")
+    @classmethod
+    def _required_text(cls, v):
+        v = " ".join(str(v or "").split())
+        if not v:
+            raise ValueError("This field is required")
+        return v[:255]
+
+    @field_validator("address_line2", "landmark", mode="before")
+    @classmethod
+    def _optional_text(cls, v):
+        return " ".join(str(v or "").split())[:255]
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _phone(cls, v):
+        digits = "".join(ch for ch in str(v or "") if ch.isdigit())
+        if len(digits) == 12 and digits.startswith("91"):
+            digits = digits[2:]
+        if len(digits) == 11 and digits.startswith("0"):
+            digits = digits[1:]
+        if len(digits) != 10 or digits[0] not in "6789":
+            raise ValueError("Enter a valid 10-digit mobile number")
+        return digits
+
+    @field_validator("postal_code", mode="before")
+    @classmethod
+    def _pincode(cls, v):
+        digits = "".join(ch for ch in str(v or "") if ch.isdigit())
+        if len(digits) != 6 or digits[0] == "0":
+            raise ValueError("Enter a valid 6-digit pincode")
+        return digits
+
+    @field_validator("address_type", mode="before")
+    @classmethod
+    def _type(cls, v):
+        t = str(v or "home").strip().lower()
+        t = {"office": "work"}.get(t, t)
+        return t if t in ("home", "work", "other") else "home"
 
 
 class AddressResponse(AddressBase):
