@@ -43,15 +43,15 @@ def create_access_token(subject: Union[str, Any], session: Session, expires_delt
 
 
 def _extract_token(request: Request) -> Optional[str]:
-    token = request.cookies.get(COOKIE_ACCESS_KEY)
-    if token:
-        return token
-
+    # Authorization header first: it is what the website sends for the signed-in
+    # user. The cookie is only a fallback — it can be stale (Google sign-in and
+    # site logout never update it) or belong to a previous user on the browser.
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        return auth_header.split(" ", 1)[1].strip() or None
-
-    return None
+        token = auth_header.split(" ", 1)[1].strip()
+        if token:
+            return token
+    return request.cookies.get(COOKIE_ACCESS_KEY) or None
 
 
 def decodeJWT(jwtoken: str, db: Session, return_object: bool = False) -> Tuple[Any, Any]:
@@ -118,26 +118,36 @@ class JWTBearer(HTTPBearer):
         super(JWTBearer, self).__init__(auto_error=auto_error)
 
     async def __call__(self, request: Request):
-        credentials = request.cookies
-        access_key = credentials.get(COOKIE_ACCESS_KEY, None)
+        # Try the Authorization header (the signed-in user on the website) first,
+        # then the cookie. Previously the cookie won whenever present, so an old
+        # expired/other-user cookie left in the browser made every request 401
+        # (or act as the previous user) even with a valid Bearer token.
+        candidates = []
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            bearer = auth_header.split(" ", 1)[1].strip()
+            if bearer:
+                candidates.append(bearer)
+        cookie = request.cookies.get(COOKIE_ACCESS_KEY)
+        if cookie and cookie not in candidates:
+            candidates.append(cookie)
 
-        if not access_key:
-            auth_header = request.headers.get("Authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                access_key = auth_header.split(" ", 1)[1].strip()
-
-        if access_key:
+        if candidates:
             db = get_db_manually()
-            user = None
             try:
-                isTokenValid, user = self.verify_jwt(access_key, db)
-                if not isTokenValid:
-                    if self.auto_error:
-                        raise HTTPException(status_code=401, detail="Invalid or expired token.")
-                    return None
+                for access_key in candidates:
+                    isTokenValid, user = self.verify_jwt(access_key, db)
+                    if isTokenValid:
+                        return user
+                    if access_key is candidates[0] and auth_header:
+                        # An invalid/expired Bearer token must not silently fall back
+                        # to a cookie for a different session.
+                        break
             finally:
                 db.close()
-            return user
+            if self.auto_error:
+                raise HTTPException(status_code=401, detail="Invalid or expired token.")
+            return None
         else:
             if self.auto_error:
                 raise HTTPException(status_code=401, detail="Authentication required.")
