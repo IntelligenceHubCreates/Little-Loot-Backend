@@ -72,6 +72,8 @@ class OrderResponse(OrderBase):
     gift_to:      Optional[str] = None
     gift_from:    Optional[str] = None
     hide_prices:  bool          = False
+    payment_method: Optional[str] = None   # whatsapp_upi | razorpay
+    payment_status: Optional[str] = None   # unpaid | paid
 
     class Config:
         from_attributes = True

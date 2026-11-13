@@ -265,11 +265,13 @@ def _serialize_admin_order(o, payment_map: dict) -> dict:
         "total_amount":   float(getattr(o, "total_amount", 0) or 0),
         "created_at":     o.created_at.isoformat() if getattr(o, "created_at", None) else "",
         "updated_at":     o.updated_at.isoformat() if getattr(o, "updated_at", None) else "",
-        # Payment — real Razorpay status where a verified record links, else empty.
-        "payment_status": (pay.status if pay else ""),
-        "payment_method": ("Razorpay" if pay else ""),
+        # Payment — Razorpay record when one links, else the offline (WhatsApp/UPI) fields
+        "payment_status": (pay.status if pay else (getattr(o, "payment_status", None) or "")),
+        "payment_method": ("Razorpay" if pay else ("WhatsApp / UPI" if getattr(o, "payment_method", None) == "whatsapp_upi" else "")),
+        "payment_reference": getattr(o, "payment_reference", None),
         "razorpay_payment_id": rpid,
-        "paid_at":        (pay.paid_at.isoformat() if pay and pay.paid_at else None),
+        "paid_at":        (pay.paid_at.isoformat() if pay and pay.paid_at
+                           else (o.paid_at.isoformat() if getattr(o, "paid_at", None) else None)),
         "items":          items,
     }
 
@@ -404,6 +406,10 @@ async def admin_update_order_status(
     order = update_order_status_admin(db, order_id, new_status)  # stores lowercase
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    # Cancelled WhatsApp/UPI order: give its reserved stock back (once)
+    from app.orders.whatsapp import restore_stock_if_cancelled
+    restore_stock_if_cancelled(db, order)
 
     # ── Lifecycle email notifications (fire-and-forget) ──────────────────────
     _send_status_email(db, order, new_status)

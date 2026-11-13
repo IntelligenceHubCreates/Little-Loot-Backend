@@ -22,6 +22,12 @@ class Order(Base):
     created_at       = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     updated_at       = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     razorpay_payment_id = Column(String(100), nullable=True, index=True)
+    # Offline payments (Step 24): WhatsApp order → UPI collected by the store
+    payment_method      = Column(String(30),  nullable=True)    # whatsapp_upi | razorpay
+    payment_status      = Column(String(20),  nullable=True, index=True)  # unpaid | paid
+    payment_reference   = Column(String(120), nullable=True)    # UPI txn id / admin note
+    paid_at             = Column(TIMESTAMP(timezone=True), nullable=True)
+    stock_restored      = Column(Boolean, nullable=False, server_default='false', default=False)
     delivered_at        = Column(TIMESTAMP(timezone=True), nullable=True)
     user        = relationship("Users",     back_populates="orders")
     order_items = relationship("OrderItem", back_populates="order")

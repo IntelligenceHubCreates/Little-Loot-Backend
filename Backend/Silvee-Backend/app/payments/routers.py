@@ -120,29 +120,29 @@ class VerifyPaymentResponse(BaseModel):
     message:    str
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────
 
-@payment_router.post("/create-order", response_model=CreateOrderResponse)
-@limiter.limit("10/minute")
-async def create_payment_order(
-    request: Request,
-    body: CreateOrderRequest,
-    session: Session = Depends(get_db),
-    user=Depends(JWTBearer()),
-):
+# ── Server-side cart pricing (shared by Razorpay checkout and WhatsApp orders) ──
+
+DELIVERY_FEE            = 49.0
+FREE_DELIVERY_THRESHOLD = 499.0
+
+
+def price_cart(session: Session, cart_items: List[dict], coupon_code: Optional[str]) -> dict:
+    """Recompute every price from the database — never trust the client.
+
+    Returns {items, subtotal, discount, coupon_code, delivery, total}; each item
+    carries the server unit price (incl. personalisation surcharge) and the
+    validated personalisation. Raises 400/404 for unavailable products, bad
+    quantities, insufficient stock, invalid personalisation or coupons."""
     import math
     from app.coupons.services import evaluate_coupon, CouponError
 
-    DELIVERY_FEE            = 49.0
-    FREE_DELIVERY_THRESHOLD = 499.0
-
-    if not body.cart_items:
+    if not cart_items:
         raise HTTPException(status_code=400, detail="Cart is empty")
 
-    # ── Recompute subtotal from REAL product prices (never trust client) ──
     subtotal = 0.0
     snapshot_items = []
-    for item in body.cart_items:
+    for item in cart_items:
         product = session.query(Product).filter(Product.id == item.get("product_id")).first()
         if not product:
             raise HTTPException(status_code=404, detail=f"Product not found: {item.get('product_id')}")
@@ -164,21 +164,40 @@ async def create_payment_order(
         custom = validate_customization(product, item.get("customization"))
         unit = max(0.0, unit) + customization_surcharge(custom)
         subtotal += unit * qty
-        # Store the server price, not the client's, so order lines/invoices are honest
-        snapshot_items.append({**item, "quantity": qty, "price": unit, "customization": custom})
+        snapshot_items.append({**item, "quantity": qty, "price": unit, "customization": custom,
+                               "name": product.name, "sku": getattr(product, "sku", None)})
 
-    # ── Coupon (server-validated) ──
     discount = 0.0
     coupon_code_norm = None
-    if body.coupon_code:
+    if coupon_code:
         try:
-            coupon_obj, discount = evaluate_coupon(session, body.coupon_code, subtotal)
+            coupon_obj, discount = evaluate_coupon(session, coupon_code, subtotal)
             coupon_code_norm = coupon_obj.code
         except CouponError as ce:
             raise HTTPException(status_code=400, detail=f"Coupon: {ce.message}")
 
     delivery = 0.0 if subtotal >= FREE_DELIVERY_THRESHOLD else DELIVERY_FEE
-    total_rupees = max(0.0, subtotal - discount + delivery)
+    total = max(0.0, subtotal - discount + delivery)
+    return {"items": snapshot_items, "subtotal": subtotal, "discount": discount,
+            "coupon_code": coupon_code_norm, "delivery": delivery, "total": total}
+
+# ── Endpoints ─────────────────────────────────────────────────────────────
+
+@payment_router.post("/create-order", response_model=CreateOrderResponse)
+@limiter.limit("10/minute")
+async def create_payment_order(
+    request: Request,
+    body: CreateOrderRequest,
+    session: Session = Depends(get_db),
+    user=Depends(JWTBearer()),
+):
+    priced = price_cart(session, body.cart_items, body.coupon_code)
+    snapshot_items   = priced["items"]
+    subtotal         = priced["subtotal"]
+    discount         = priced["discount"]
+    coupon_code_norm = priced["coupon_code"]
+    delivery         = priced["delivery"]
+    total_rupees     = priced["total"]
     amount_paise = int(round(total_rupees * 100))
 
     if amount_paise <= 0:

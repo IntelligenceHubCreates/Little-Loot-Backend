@@ -515,3 +515,93 @@ def send_bulk_enquiry_confirmation(e: dict) -> None:
         html=_base_template("Bulk order request received — Little Loot", "We'll reply within 24 hours with a quote.", body),
     )
 
+
+
+# ── WhatsApp + UPI orders (while online payments are off) ────────────────────
+
+def _store_wa_link(text: str) -> str:
+    from urllib.parse import quote
+    digits = "".join(ch for ch in settings.return_warehouse_phone if ch.isdigit())
+    return f"https://wa.me/91{digits[-10:]}?text={quote(text)}"
+
+
+def send_whatsapp_order_received(
+    *,
+    user_email: str,
+    user_name: str,
+    order_id: str,
+    items: List[dict],
+    subtotal: float,
+    discount: float,
+    delivery: float,
+    total: float,
+    shipping_address: str,
+    whatsapp_text: str,
+) -> None:
+    """Order placed (unpaid): tells the customer we'll confirm on WhatsApp and take UPI."""
+    order_short = str(order_id)[:8].upper()
+    body = (
+        _heading("&#128230;", "We&rsquo;ve received your order!")
+        + _order_pill(order_short)
+        + f'<p style="color:{_BODY};font-size:14px;line-height:1.8;margin:0 0 4px">'
+        f'Hi <strong>{_html_escape(user_name or "there")}</strong>,</p>'
+        f'<p style="color:{_BODY};font-size:14px;line-height:1.8;margin:0 0 12px">'
+        f'Thank you for shopping with Little Loot! <strong>What happens next:</strong></p>'
+        f'<ol style="color:{_BODY};font-size:14px;line-height:1.9;margin:0 0 16px;padding-left:20px">'
+        f'<li>We confirm your order on <strong>WhatsApp</strong> (usually within a few hours).</li>'
+        f'<li>We share our <strong>UPI</strong> details &mdash; pay the total below.</li>'
+        f'<li>We pack and ship your order and send you the tracking details.</li></ol>'
+        + _items_table(items)
+        + _totals_block(subtotal=subtotal, discount=discount, delivery=delivery, total=total)
+        + _address_block(shipping_address)
+        + _cta_button(_store_wa_link(whatsapp_text), "Send my order on WhatsApp &#8594;")
+        + f'<p style="color:{_MUTED};font-size:12px;line-height:1.6;margin:14px 0 0;text-align:center">'
+        f'Didn&rsquo;t send the WhatsApp message yet? Tap the button above &mdash; it&rsquo;s pre-filled with your order.</p>'
+    )
+    _dispatch(
+        subject=f"Order received #{order_short} — we'll confirm on WhatsApp \U0001f4e6",
+        to=user_email,
+        html=_base_template("Order received — Little Loot", f"Order #{order_short} received. We'll confirm on WhatsApp.", body),
+    )
+
+
+def send_new_order_to_store(
+    *,
+    order_id: str,
+    customer_name: str,
+    customer_phone: str,
+    customer_email: str,
+    items: List[dict],
+    total: float,
+    shipping_address: str,
+    message: str,
+) -> None:
+    """New WhatsApp order → store inbox (backup in case the customer doesn't send the WhatsApp)."""
+    order_short = str(order_id)[:8].upper()
+    digits = "".join(ch for ch in (customer_phone or "") if ch.isdigit())[-10:]
+    from urllib.parse import quote
+    greeting = f"Hi {customer_name}!" if customer_name else "Hi!"
+    wa_text = f"{greeting} This is Little Loot about your order #{order_short}."
+    wa = f"https://wa.me/91{digits}?text={quote(wa_text)}" if len(digits) == 10 else ""
+    body = (
+        _heading("&#128722;", "New order — confirm on WhatsApp")
+        + _order_pill(order_short)
+        + _bulk_rows([
+            ("Customer", customer_name),
+            ("Phone", customer_phone),
+            ("Email", customer_email),
+            ("Total to collect (UPI)", f"₹{total:,.0f}"),
+        ])
+        + _items_table(items)
+        + _address_block(shipping_address)
+        + f'<pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;color:{_BODY};background:#F9F5FF;border-radius:12px;padding:12px 14px;margin:16px 0 0">{_html_escape(message)}</pre>'
+        + (_cta_button(wa, "WhatsApp the customer &#8594;") if wa else "")
+        + f'<p style="color:{_MUTED};font-size:12px;line-height:1.6;margin:14px 0 0;text-align:center">'
+        f'After the UPI payment arrives, open Admin &rarr; Orders &rarr; #{order_short} and click &ldquo;Mark payment received&rdquo;.</p>'
+    )
+    _dispatch(
+        subject=f"🛒 New order #{order_short} — ₹{total:,.0f} — {customer_name or 'customer'}",
+        to=settings.support_email,
+        html=_base_template("New order — Little Loot", f"New order #{order_short} for ₹{total:,.0f}", body),
+        reply_to=customer_email or None,
+    )

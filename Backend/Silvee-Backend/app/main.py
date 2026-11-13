@@ -36,6 +36,7 @@ from app.shipping.routers import (
 )
 from app.feedback.routers import public_feedback_router, admin_feedback_router
 from app.bulk.routers import bulk_router, admin_bulk_router
+from app.orders.whatsapp import whatsapp_order_router, admin_payment_router
 from app.models import Base
 
 logging.basicConfig(level=logging.INFO)
@@ -157,6 +158,8 @@ server.include_router(public_feedback_router)
 server.include_router(admin_feedback_router)
 server.include_router(bulk_router)
 server.include_router(admin_bulk_router)
+server.include_router(whatsapp_order_router)
+server.include_router(admin_payment_router)
 
 
 @server.get("/")
