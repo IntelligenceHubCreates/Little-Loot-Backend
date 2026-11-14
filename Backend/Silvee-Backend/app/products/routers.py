@@ -808,8 +808,15 @@ async def get_cloudinary_upload_signature(
 
 
 @product_router.get("/{id}", response_model=dict)
-async def get_product_detail(id: str, session: Session = Depends(get_db)):
+async def get_product_detail(id: str, request: Request, session: Session = Depends(get_db)):
     product = _get_product_or_404(id, session)
+
+    # Hidden products are not part of the shop: only an admin can open them.
+    if not product.is_active:
+        from app.users.utils import get_current_user
+        viewer, _ = await get_current_user(request, session)
+        if not viewer or viewer.get("role") != 1:
+            raise HTTPException(status_code=404, detail="Product not found")
 
     # Aggregate live rating data so the product page shows real stars/counts
     # instead of the frontend's hard-coded 4.0 fallback.
@@ -853,6 +860,7 @@ async def add_new_product(
      productVideo:         Optional[str] = Form(None),
     productIsFeatured:    Optional[str] = Form(None),
     productIsNew:         Optional[str] = Form(None),
+    productIsActive:      Optional[str] = Form(None),  # 'false' = hidden from the shop
     productRecipients:    Optional[str] = Form(None),  # JSON: ["little","her"]
     productOccasions:     Optional[str] = Form(None),  # JSON: ["birthday","return"]
     productPairsWith:     Optional[str] = Form(None),  # JSON: ["uuid1","uuid2"]
@@ -894,6 +902,7 @@ async def add_new_product(
         product_video = productVideo or None,
         is_featured = productIsFeatured == 'true',
         is_new      = productIsNew      == 'true',
+        is_active   = productIsActive   != 'false',
         recipients  = json.loads(productRecipients) if productRecipients else [],
         occasions   = json.loads(productOccasions)  if productOccasions  else [],
         pairs_with  = json.loads(productPairsWith)  if productPairsWith  else [],
@@ -1018,6 +1027,7 @@ async def update_product(
     deleteVideo:           Optional[str] = Form(None),
     productIsFeatured:     Optional[str] = Form(None),
     productIsNew:          Optional[str] = Form(None),
+    productIsActive:       Optional[str] = Form(None),  # 'false' = hidden from the shop
     productRecipients:     Optional[str] = Form(None),  # JSON: ["little","her"]
     productOccasions:      Optional[str] = Form(None),  # JSON: ["birthday","return"]
     productPairsWith:      Optional[str] = Form(None),  # JSON: ["uuid1","uuid2"]
@@ -1070,6 +1080,8 @@ async def update_product(
         product.is_featured = productIsFeatured == 'true'
     if productIsNew is not None:
         product.is_new = productIsNew == 'true'
+    if productIsActive is not None:
+        product.is_active = productIsActive != 'false'
     if productRecipients is not None:
         product.recipients = json.loads(productRecipients)
     if productOccasions is not None:
