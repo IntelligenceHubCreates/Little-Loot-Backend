@@ -349,10 +349,45 @@ async def delete_order(
     if not HAS_ORDERS:
         raise HTTPException(status_code=501, detail="Orders model not found")
 
-    order = session.query(Order).filter(Order.id == UUID(order_id)).first()
+    try:
+        oid = UUID(order_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order = session.query(Order).filter(Order.id == oid).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    session.delete(order)
+
+    # Shipments and damage reports are audit records tied to the order — keep them.
+    from app.shipping.models import Shipment
+    from app.returns.models import ReturnRequest
+    if session.query(Shipment.id).filter(Shipment.order_id == oid).first():
+        raise HTTPException(
+            status_code=409,
+            detail="This order has a shipment, so it can't be deleted. Mark it Cancelled instead.",
+        )
+    if session.query(ReturnRequest.id).filter(ReturnRequest.order_id == oid).first():
+        raise HTTPException(
+            status_code=409,
+            detail="This order has a damage report, so it can't be deleted. Mark it Cancelled instead.",
+        )
+
+    # A WhatsApp order reserves stock when placed; if it never went out, give it back.
+    if (
+        order.payment_method == "whatsapp_upi"
+        and not order.stock_restored
+        and (order.status or "").lower() in ("pending", "confirmed", "processing")
+    ):
+        from app.products.models import Product
+        for it in session.query(OrderItem).filter(OrderItem.order_id == oid).all():
+            p = session.query(Product).filter(Product.id == it.product_id).first()
+            if p:
+                p.count = (p.count or 0) + int(it.quantity or 0)
+
+    # Reviews stay, just unlinked; line items go with the order.
+    from app.rating.models import Rating
+    session.query(Rating).filter(Rating.order_id == oid).update({Rating.order_id: None}, synchronize_session=False)
+    session.query(OrderItem).filter(OrderItem.order_id == oid).delete(synchronize_session=False)
+    session.query(Order).filter(Order.id == oid).delete(synchronize_session=False)
     session.commit()
 
 
