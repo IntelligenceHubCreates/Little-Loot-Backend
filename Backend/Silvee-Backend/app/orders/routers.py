@@ -483,7 +483,7 @@ async def create_new_order(
         discount_amount = 0.0
         if getattr(order, "coupon_code", None):
             try:
-                coupon_obj, discount_amount = evaluate_coupon(db, order.coupon_code, subtotal)
+                coupon_obj, discount_amount = evaluate_coupon(db, order.coupon_code, subtotal, user_id=user.get('id'), require_user=True)
             except CouponError as ce:
                 raise HTTPException(status_code=400, detail=f"Coupon: {ce.message}")
 

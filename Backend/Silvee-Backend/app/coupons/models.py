@@ -14,8 +14,10 @@ class Coupon(Base):
     discount_type  = Column(String(20), nullable=False)   # 'percentage' | 'flat'
     discount_value = Column(Float, nullable=False)
     min_order      = Column(Float, default=0)
-    max_uses       = Column(Integer, default=100)
+    max_uses       = Column(Integer, default=100)          # 0 / NULL = unlimited
     used_count     = Column(Integer, default=0)
     is_active      = Column(Boolean, default=True)
+    # Only for a customer's first order (no earlier order that wasn't cancelled)
+    first_order_only = Column(Boolean, nullable=False, default=False, server_default='false')
     expires_at     = Column(DateTime(timezone=True), nullable=True)
     created_at     = Column(DateTime(timezone=True), default=datetime.utcnow)

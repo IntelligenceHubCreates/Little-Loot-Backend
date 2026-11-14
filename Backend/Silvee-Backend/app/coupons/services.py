@@ -10,10 +10,24 @@ class CouponError(Exception):
         super().__init__(message)
 
 
-def evaluate_coupon(db, code: str, subtotal: float):
+def has_previous_order(db, user_id) -> bool:
+    """True if the customer already has an order that wasn't cancelled."""
+    from sqlalchemy import func
+    from app.orders.models import Order
+    return db.query(Order.id).filter(
+        Order.user_id == user_id,
+        func.lower(func.coalesce(Order.status, '')) != 'cancelled',
+    ).first() is not None
+
+
+def evaluate_coupon(db, code: str, subtotal: float, user_id=None, require_user: bool = False):
     """Validate a coupon against a cart subtotal and compute the discount.
     Returns (coupon, discount_amount). Raises CouponError on any failure.
-    Used by BOTH /validate and order creation so preview == charged amount."""
+    Used by BOTH /validate and order creation so preview == charged amount.
+
+    user_id      -- the signed-in customer, when known (needed for first-order coupons)
+    require_user -- True when placing an order: a first-order coupon then needs a
+                    signed-in customer. A preview without a login is let through."""
     code = (code or "").upper().strip()
     if not code:
         raise CouponError("Coupon code is required")
@@ -33,8 +47,15 @@ def evaluate_coupon(db, code: str, subtotal: float):
         if exp < datetime.now(timezone.utc):
             raise CouponError("Coupon has expired")
 
-    if (coupon.used_count or 0) >= (coupon.max_uses or 0):
+    # max_uses 0 / NULL = no limit
+    if (coupon.max_uses or 0) > 0 and (coupon.used_count or 0) >= coupon.max_uses:
         raise CouponError("Coupon usage limit reached")
+    if getattr(coupon, "first_order_only", False):
+        if user_id is None:
+            if require_user:
+                raise CouponError("Please log in to use this first-order coupon")
+        elif has_previous_order(db, user_id):
+            raise CouponError("This coupon is only for your first order")
     if subtotal < (coupon.min_order or 0):
         raise CouponError(f"Minimum order amount is ₹{(coupon.min_order or 0):.0f}")
 

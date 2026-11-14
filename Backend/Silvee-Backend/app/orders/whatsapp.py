@@ -133,7 +133,7 @@ def create_whatsapp_order(
         if not str(addr.get(field) or "").strip():
             raise HTTPException(status_code=400, detail=f"Please add the delivery {label}")
 
-    priced = price_cart(session, body.cart_items, body.coupon_code)
+    priced = price_cart(session, body.cart_items, body.coupon_code, user_id=user["id"])
     if priced["total"] <= 0:
         raise HTTPException(status_code=400, detail="Invalid order total")
 

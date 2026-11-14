@@ -521,9 +521,10 @@ class CouponCreate(BaseModel):
     discount_type:  str   # "percentage" | "flat"
     discount_value: float
     min_order:      float = 0
-    max_uses:       int   = 100
+    max_uses:       int   = 100      # 0 = unlimited
     is_active:      bool  = True
     expires_at:     Optional[str] = None
+    first_order_only: bool = False
 
 
 @admin_router.get("/coupons")
@@ -546,9 +547,10 @@ def _serialize_coupon(c: Any) -> dict:
         "discount_type":  c.discount_type,
         "discount_value": float(c.discount_value),
         "min_order":      float(getattr(c, "min_order",  0) or 0),
-        "max_uses":       int(getattr(c,   "max_uses",   100) or 100),
+        "max_uses":       int(getattr(c,   "max_uses",   0) or 0),   # 0 = unlimited
         "used_count":     int(getattr(c,   "used_count", 0) or 0),
         "is_active":      bool(c.is_active),
+        "first_order_only": bool(getattr(c, "first_order_only", False)),
         "expires_at":     c.expires_at.isoformat() if getattr(c, "expires_at", None) else None,
         "created_at":     c.created_at.isoformat() if getattr(c, "created_at", None) else "",
     }
@@ -586,9 +588,10 @@ async def create_coupon(
         discount_type=data.discount_type,
         discount_value=data.discount_value,
         min_order=data.min_order,
-        max_uses=data.max_uses,
+        max_uses=max(0, data.max_uses),
         is_active=data.is_active,
         expires_at=expires,
+        first_order_only=data.first_order_only,
     )
     session.add(coupon)
     session.commit()
@@ -622,7 +625,15 @@ async def update_coupon(
     elif "expires_at" in data and not data["expires_at"]:
         data["expires_at"] = None
 
-    allowed_fields = {"code", "discount_type", "discount_value", "min_order", "max_uses", "is_active", "expires_at"}
+    if "max_uses" in data:
+        try:
+            data["max_uses"] = max(0, int(data["max_uses"] or 0))     # 0 = unlimited
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="max_uses must be a whole number")
+    if "first_order_only" in data:
+        data["first_order_only"] = bool(data["first_order_only"])
+
+    allowed_fields = {"code", "discount_type", "discount_value", "min_order", "max_uses", "is_active", "expires_at", "first_order_only"}
     for k, v in data.items():
         if k in allowed_fields and hasattr(coupon, k):
             setattr(coupon, k, v)

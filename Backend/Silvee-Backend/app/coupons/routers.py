@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -21,9 +21,10 @@ def _serialize(c: Coupon) -> dict:
         "discount_type":  c.discount_type,
         "discount_value": c.discount_value,
         "min_order":      c.min_order      or 0,
-        "max_uses":       c.max_uses       or 100,
+        "max_uses":       c.max_uses       or 0,      # 0 = unlimited
         "used_count":     c.used_count     or 0,
         "is_active":      c.is_active,
+        "first_order_only": bool(getattr(c, "first_order_only", False)),
         "expires_at":     c.expires_at.isoformat() if c.expires_at else None,
         "created_at":     c.created_at.isoformat() if c.created_at else None,
     }
@@ -84,6 +85,7 @@ async def create_coupon(
         max_uses       = body.max_uses,
         is_active      = body.is_active,
         expires_at     = expires,
+        first_order_only = body.first_order_only,
     )
     db.add(coupon)
     try:
@@ -126,6 +128,7 @@ async def update_coupon(
     if body.min_order  is not None: coupon.min_order  = body.min_order
     if body.max_uses   is not None: coupon.max_uses   = body.max_uses
     if body.is_active  is not None: coupon.is_active  = body.is_active
+    if body.first_order_only is not None: coupon.first_order_only = body.first_order_only
     if body.expires_at is not None:
         if body.expires_at == "":
             coupon.expires_at = None
@@ -168,14 +171,20 @@ from app.coupons.services import evaluate_coupon, CouponError   # add at top
 @coupon_router.post("/validate", response_model=dict)
 async def validate_coupon(
     body: dict,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Public endpoint — called from the cart/checkout to preview a coupon."""
+    """Public endpoint — called from the cart/checkout to preview a coupon.
+    When the caller is signed in, first-order coupons are checked against their orders."""
+    from app.users.utils import get_current_user
+    viewer, _ = await get_current_user(request, db)
+    viewer_id = viewer.get("id") if viewer else None
     try:
         coupon, discount = evaluate_coupon(
             db,
             body.get("code") or "",
             float(body.get("order_total") or 0),
+            user_id=viewer_id,
         )
     except CouponError as ce:
         raise HTTPException(400, ce.message)
@@ -186,6 +195,7 @@ async def validate_coupon(
         "discount_type":   coupon.discount_type,
         "discount_value":  coupon.discount_value,
         "discount_amount": discount,
+        "first_order_only": bool(getattr(coupon, "first_order_only", False)),
         "message":         f"{coupon.discount_value:.0f}"
                            f"{'%' if coupon.discount_type == 'percentage' else '₹'} off applied!",
     }
@@ -222,5 +232,6 @@ async def list_public_coupons(db: Session = Depends(get_db)):
             "discount_value": c.discount_value,
             "min_order":      c.min_order or 0,
             "expires_at":     c.expires_at.isoformat() if c.expires_at else None,
+            "first_order_only": bool(getattr(c, "first_order_only", False)),
         })
     return out

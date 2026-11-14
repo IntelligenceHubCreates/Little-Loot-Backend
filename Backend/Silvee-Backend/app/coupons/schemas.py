@@ -12,6 +12,7 @@ class CouponCreate(BaseModel):
     max_uses:       int    = 100
     is_active:      bool   = True
     expires_at:     Optional[str] = None   # ISO date string or None
+    first_order_only: bool = False
 
 
 class CouponUpdate(BaseModel):
@@ -22,6 +23,7 @@ class CouponUpdate(BaseModel):
     max_uses:       Optional[int]   = None
     is_active:      Optional[bool]  = None
     expires_at:     Optional[str]   = None
+    first_order_only: Optional[bool] = None
 
 
 class CouponResponse(BaseModel):
@@ -33,6 +35,7 @@ class CouponResponse(BaseModel):
     max_uses:       int
     used_count:     int
     is_active:      bool
+    first_order_only: bool = False
     expires_at:     Optional[datetime]
     created_at:     datetime
 

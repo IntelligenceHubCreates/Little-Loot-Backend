@@ -127,7 +127,7 @@ DELIVERY_FEE            = 49.0
 FREE_DELIVERY_THRESHOLD = 499.0
 
 
-def price_cart(session: Session, cart_items: List[dict], coupon_code: Optional[str]) -> dict:
+def price_cart(session: Session, cart_items: List[dict], coupon_code: Optional[str], user_id=None) -> dict:
     """Recompute every price from the database — never trust the client.
 
     Returns {items, subtotal, discount, coupon_code, delivery, total}; each item
@@ -171,7 +171,9 @@ def price_cart(session: Session, cart_items: List[dict], coupon_code: Optional[s
     coupon_code_norm = None
     if coupon_code:
         try:
-            coupon_obj, discount = evaluate_coupon(session, coupon_code, subtotal)
+            # an order is being placed: first-order coupons need the signed-in customer
+            coupon_obj, discount = evaluate_coupon(session, coupon_code, subtotal,
+                                                   user_id=user_id, require_user=True)
             coupon_code_norm = coupon_obj.code
         except CouponError as ce:
             raise HTTPException(status_code=400, detail=f"Coupon: {ce.message}")
@@ -191,7 +193,8 @@ async def create_payment_order(
     session: Session = Depends(get_db),
     user=Depends(JWTBearer()),
 ):
-    priced = price_cart(session, body.cart_items, body.coupon_code)
+    priced = price_cart(session, body.cart_items, body.coupon_code,
+                        user_id=(user or {}).get("id"))
     snapshot_items   = priced["items"]
     subtotal         = priced["subtotal"]
     discount         = priced["discount"]
