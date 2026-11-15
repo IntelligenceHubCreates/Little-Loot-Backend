@@ -339,6 +339,10 @@ async def update_order_status(
     session.refresh(order)
     return {"id": str(order.id), "status": order.status}
 
+# Shipment stages before the courier has the parcel (cancel is only possible here)
+_NOT_DISPATCHED = {"pending", "ready_to_pack", "packed", "label_generated", "pickup_scheduled", "cancelled"}
+
+
 @admin_router.delete("/orders/{order_id}", status_code=204)
 async def delete_order(
     order_id: str,
@@ -357,31 +361,48 @@ async def delete_order(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # Shipments and damage reports are audit records tied to the order — keep them.
-    from app.shipping.models import Shipment
+    # A shipment that reached the courier is a delivery record — keep the order.
+    # One that never left the store (still being packed, or cancelled) goes with it.
+    from app.shipping.models import (
+        Shipment, ShipmentItem, ShipmentStatusHistory, DeliveryAttempt, ShippingLabel,
+    )
+    from app.notifications.models import ShipmentNotificationLog
     from app.returns.models import ReturnRequest
-    if session.query(Shipment.id).filter(Shipment.order_id == oid).first():
+    shipments = session.query(Shipment).filter(Shipment.order_id == oid).all()
+    dispatched = [s for s in shipments if (s.status or "") not in _NOT_DISPATCHED]
+    if dispatched:
+        stage = (dispatched[0].status or "").replace("_", " ")
         raise HTTPException(
             status_code=409,
-            detail="This order has a shipment, so it can't be deleted. Mark it Cancelled instead.",
+            detail=f"This order was already handed to the courier (shipment: {stage}), "
+                   "so it can't be deleted. It stays for your delivery records.",
         )
     if session.query(ReturnRequest.id).filter(ReturnRequest.order_id == oid).first():
         raise HTTPException(
             status_code=409,
-            detail="This order has a damage report, so it can't be deleted. Mark it Cancelled instead.",
+            detail="This order has a damage report, so it can't be deleted. "
+                   "It stays for your records.",
         )
 
     # A WhatsApp order reserves stock when placed; if it never went out, give it back.
     if (
         order.payment_method == "whatsapp_upi"
         and not order.stock_restored
-        and (order.status or "").lower() in ("pending", "confirmed", "processing")
+        and (order.status or "").lower() in ("pending", "confirmed", "processing", "packed")
     ):
         from app.products.models import Product
         for it in session.query(OrderItem).filter(OrderItem.order_id == oid).all():
             p = session.query(Product).filter(Product.id == it.product_id).first()
             if p:
                 p.count = (p.count or 0) + int(it.quantity or 0)
+
+    ship_ids = [s.id for s in shipments]
+    if ship_ids:
+        for model in (ShipmentItem, ShipmentStatusHistory, DeliveryAttempt, ShippingLabel):
+            session.query(model).filter(model.shipment_id.in_(ship_ids)).delete(synchronize_session=False)
+        session.query(ShipmentNotificationLog).filter(ShipmentNotificationLog.shipment_id.in_(ship_ids)) \
+            .update({ShipmentNotificationLog.shipment_id: None}, synchronize_session=False)
+        session.query(Shipment).filter(Shipment.id.in_(ship_ids)).delete(synchronize_session=False)
 
     # Reviews stay, just unlinked; line items go with the order.
     from app.rating.models import Rating
